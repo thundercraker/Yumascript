@@ -3,8 +3,8 @@ using System.Collections.Generic;
 
 	public class YSParseNode
 	{
-		public enum NodeType { Program, Statement, VarCreate, VarPrimitive, Condition, Loop, Function, FunctionParamList, FunctionReturn, Structure, Block, Expression, ExpressionList,
-			ExpressionLogic, ExpressionBoolean, ExpressionNumber, ExpressionTerm, ExpressionFactor, Identity, IdentityArray, IdentityFunction,
+		public enum NodeType { Program, Statement, VarCreate, VarPrimitive, Condition, Loop, Function, FunctionParamList, FunctionReturn, FunctionBody, Structure, Block, Expression, ExpressionList,
+			ExpressionLogic, ExpressionBoolean, ExpressionNumber, ExpressionTerm, ExpressionFactor, Number, Text, Identity, IdentityArray, IdentityFunction,
 			IdentityStructure, Terminal, TypeName };
 
 		public readonly NodeType Type;

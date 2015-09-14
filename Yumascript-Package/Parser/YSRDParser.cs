@@ -560,23 +560,23 @@ public class YSRDParser
 				if (DataType (false)) {
 					//Console.WriteLine ("check");
 					CreateTerminalChild (previous);
-					fp.type = STATE.TranslateTokenTypeToIdentityType (previous.Type);
+					fp.Type = STATE.TranslateTokenTypeToIdentityType (previous.Type);
 					//Console.WriteLine ("check2");
 					Expect (Type.Identity);
 					CreateTerminalChild (previous);
-					fp.name = previous.Content;
-					ftype.parameters.Add (fp);
+					fp.Name = previous.Content;
+					ftype.Parameters.Add (fp);
 				}
 				while (Accept (Type.Comma)) {
 					fp = new FunctionParamater ();
 					DataType (true);
 					CreateTerminalChild (previous);
-					fp.type = STATE.TranslateTokenTypeToIdentityType (previous.Type);
+					fp.Type = STATE.TranslateTokenTypeToIdentityType (previous.Type);
 					Expect (Type.Identity);
 					CreateTerminalChild (previous);
-					fp.name = previous.Content;
+					fp.Name = previous.Content;
 
-					ftype.parameters.Add (fp);
+					ftype.Parameters.Add (fp);
 				}
 			}
 			Expect (Type.RParen);
@@ -584,10 +584,10 @@ public class YSRDParser
 			
 			Expect (Type.Colon);
 			DataType (true);
-			ftype.returns = STATE.TranslateTokenTypeToIdentityType(previous.Type);
+			ftype.Returns = STATE.TranslateTokenTypeToIdentityType(previous.Type);
 			CreateTerminalChild (previous);
 			Expect (Type.LCBraket);
-			ftype.start = PC;
+			ftype.Start = PC;
 
 			STATE.PutParseFunction (functionName, ftype);
 
@@ -608,11 +608,12 @@ public class YSRDParser
 				}else if(Loop (false)) {
 				}else if(Structure (false)) {
 				}else if (Accept (Type.Return)) {
+					PopParseNode ();
 					PushParseNode (ParseNodeType.FunctionReturn);
 
 					IdentityType X1 = IdentityType.Unknown;
 					Expression (ref X1);
-					if (ftype.returns != X1)
+					if (ftype.Returns != X1)
 						Error ("Function " + functionName + " must return " + type);
 					Expect (Type.Semicolon);
 
@@ -687,6 +688,7 @@ public class YSRDParser
 		ExprBool (ref X1);
 
 		Boolean booltype = false;
+		int stackCount = 0;
 		while (Accept (Type.And) || Accept (Type.Or)) {
 			CreateTerminalChild (previous);
 			PushParseNode (ParseNodeType.ExpressionLogic);
@@ -696,8 +698,11 @@ public class YSRDParser
 			ExpectType (IdentityType.Boolean, X2);
 			booltype = true;
 
-			PopAndInsertParseNode ();
+			stackCount++;
+			//PopAndInsertParseNode ();
 		}
+		for (int i = 0; i < stackCount; i++)
+			PopAndInsertParseNode ();
 
 		type = (booltype) ? IdentityType.Boolean : X1;
 
@@ -717,6 +722,7 @@ public class YSRDParser
 		if (not) {
 			ExpectType (IdentityType.Boolean, X1);
 		}
+		int stackCount = 0;
 		while (CompOpr (false)) {
 			CreateTerminalChild (previous);
 			PushParseNode (ParseNodeType.ExpressionBoolean);
@@ -726,8 +732,12 @@ public class YSRDParser
 			ExpectType (IdentityType.Boolean, X2);
 			not = true;
 
-			PopAndInsertParseNode ();
+			//PopAndInsertParseNode ();
+			stackCount++;
 		}
+		for (int i = 0; i < stackCount; i++)
+			PopAndInsertParseNode ();
+		
 		type = (not) ? IdentityType.Boolean : X1;
 
 		PopAndInsertParseNode ();
@@ -745,6 +755,7 @@ public class YSRDParser
 		ExprTerm  (ref X1);
 		if (sign)
 			ExpectType (IdentityType.Number, X1);
+		int stackCount = 0;
 		while (Accept (Type.Plus) || Accept(Type.Minus)) {
 			CreateTerminalChild (previous);
 			PushParseNode (ParseNodeType.ExpressionNumber);
@@ -754,8 +765,12 @@ public class YSRDParser
 			ExpectType (IdentityType.Number, X2);
 			sign = true;
 
-			PopAndInsertParseNode ();
+			//PopAndInsertParseNode ();
+			stackCount++;
 		}
+		for (int i = 0; i < stackCount; i++)
+			PopAndInsertParseNode ();
+		
 		type = (sign) ? IdentityType.Number : X1;
 
 		PopAndInsertParseNode ();
@@ -769,6 +784,7 @@ public class YSRDParser
 		IdentityType X1 = IdentityType.Unknown;
 		ExprFactor  (ref X1);
 		bool once = false;
+		int stackCount = 0;
 		while (Accept (Type.Asterisk) || Accept(Type.Slash)) {
 			CreateTerminalChild (previous);
 			PushParseNode (ParseNodeType.ExpressionTerm);
@@ -782,8 +798,12 @@ public class YSRDParser
 			ExprFactor (ref X2);
 			ExpectType (IdentityType.Number, X2);
 
-			PopAndInsertParseNode ();
+			//PopAndInsertParseNode ();
+			stackCount++;
 		}
+
+		for (int i = 0; i < stackCount; i++)
+			PopAndInsertParseNode ();
 		if (!once)
 			type = X1;
 		else
@@ -800,7 +820,9 @@ public class YSRDParser
 		IdentityType id_type = IdentityType.Unknown;
 		if (Identity(false, ref type, ref id_type)) {
 		} else if (Accept(Type.NumberData)) {
+			PushParseNode (ParseNodeType.Number);
 			CreateTerminalChild (previous);
+			PopAndInsertParseNode ();
 			type = IdentityType.Number;
 			/*double numberValue;
 			if (Double.TryParse (previous.Content, out numberValue))
@@ -808,14 +830,16 @@ public class YSRDParser
 			else
 				Error ("Expecting a number, found " + previous.Content);*/
 		} else if (Accept(Type.TextData)) {
+			PushParseNode (ParseNodeType.Text);
 			CreateTerminalChild (previous);
+			PopAndInsertParseNode ();
 			type = IdentityType.Text;
 			//STATE.PutText (value, previous.Content);
 		} else if (Accept (Type.LParen)) {
-			CreateTerminalChild (previous);
+			PushParseNode (ParseNodeType.ExpressionFactor);
 			Expression  (ref type);
 			Expect (Type.RParen);
-			CreateTerminalChild (previous);
+			PopAndInsertParseNode ();
 		} else {
 			Error ("Expecting a data, a number, operator or other identity of an expression");
 		}
@@ -885,7 +909,6 @@ public class YSRDParser
 				CreateTerminalChild (identityToken);
 				type = itype;
 				Console.WriteLine ("Resolved primitive value from variable " + identityToken.Content + " of type " + type);
-			
 				PopAndInsertParseNode ();
 				return true;
 			}
@@ -951,15 +974,15 @@ public class YSRDParser
 			FunctionType ftype;
 			if (!STATE.TryGetParseFunction (functionName, out ftype))
 				Error ("No function with the name " + identityToken.Content);
-			type = ftype.returns;
+			type = ftype.Returns;
 			int pcount = 0;
 			if (!Accept (Type.RParen)) {
 				IdentityType P1 = IdentityType.Unknown;
 				Expression (ref  P1);
-				ExpectType (ftype.parameters [pcount++].type, P1);
+				ExpectType (ftype.Parameters [pcount++].Type, P1);
 				while (Accept (Type.Comma)) {
 					Expression (ref  P1);
-					ExpectType (ftype.parameters [pcount++].type, P1);
+					ExpectType (ftype.Parameters [pcount++].Type, P1);
 				}
 				Expect (Type.RParen);
 			}

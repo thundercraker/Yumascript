@@ -114,38 +114,35 @@ public class YSInterpreter
 		}
 	}
 
-	public void Program()
+	public void Program(YSParseNode ProgramNode)
 	{
 		int SCNT = 0;
-		while (SCNT < Node.Children.Count) {
-			Statement (Node.Children[SCNT++]);
+		while (SCNT < ProgramNode.Children.Count) {
+			Statement (ProgramNode.Children[SCNT++]);
 		}
 	}
 
-	delegate void Resolver();
-
 	void Statement(YSParseNode StatementNode)
 	{
-		Debug ("Statement: " + Node.Type + " Index " + CINDEX + " Current " + Current.Type);
+		//Statements have only one child
 		YSParseNode StatementChild = StatementNode.Children [0];
 		switch (StatementChild.Type) {
 		case NType.VarCreate:
 			VarCreate (StatementChild);
 			break;
 		case NType.Structure:
-			Debug ("Found Structure");
 			Structure (StatementChild);
 			break;
 		default:
-			Error ("Unknown Node Type " + CType);
+			Error ("Unknown Node Type " + StatementChild.Type);
 			break;
 		}
 		Debug ("Exit Statement");
 	}
 
+	//type VarPrimitive(identity expression) { VarPrimitive(identity expression) }
 	void VarCreate(YSParseNode VarCreateNode)
 	{
-		//Debug ("VarCreate: " + Node.Type + " Index " + CINDEX + " Current " + Current.Type);
 		YSToken DataTypeToken = VarCreateNode.Children[0].Token;
 		IdentityType IType = STATE.TranslateTokenTypeToIdentityType (DataTypeToken.Type);
 
@@ -155,9 +152,9 @@ public class YSInterpreter
 		Debug ("Exit VarCreate");
 	}
 
+	//identity expression
 	void VarPrimitive(YSParseNode VarPrimitiveNode, IdentityType IType)
 	{
-		//Debug ("VarPrimitive: " + Node.Type + " Index " + CINDEX + " Current " + Current.Type);
 		YSToken NameToken = VarPrimitiveNode.Children[0].Token;
 		IDPacket primitive = IDPacket.CreateIDPacket (STATE, NameToken.Content, IType);
 		Debug ("Creating variable " + NameToken.Content + " of type " + IType);
@@ -170,48 +167,156 @@ public class YSInterpreter
 		}
 		switch (IType) {
 		case IdentityType.Number:
-			//STATE.PutNumber (primitive, 0);
+			//STATE.PutNumber (primitive, 0);1`
 			break;
 		}
 		Debug ("Exit VarPrimitive");
 	}
 
+	//identity
 	void Structure(YSParseNode StructureNode)
 	{
-		//Debug ("Structure: " + Node.Type + " Index " + CINDEX + " Current " + Current.Type);
-		StructureType structure = STATE.PrepareEmptyStructure ();
-		STATE.PushScope (structure);
-		VarCreate ();
-		Debug ("Structure: " + Node.Type + " Index " + CINDEX + " Current " + Current.Type);
-		while (CINDEX + 1 < Node.Children.Count) {
-			Debug ("More Structure Variables");
-			Next ();
-			VarCreate ();
+		string StructureName = StructureNode.Children [0].Token.Content;
+
+		//find parent
+		string ParentName = "";
+		if (StructureNode.Children.Count > 1) {
+			if (StructureNode.Children [1].Token.Type = YSToken.TokenType.Child) {
+				ParentName = StructureNode.Children [2].Token.Content;
+			}
 		}
+
+		StructureType structure = STATE.PrepareEmptyStructure ();
+
+		//TODO register as child of parent
+
+		STATE.PushScope (structure);
+		VarCreate (StructureNode.Children[3]);
+		int CCNT = 4;
+		while (CCNT < Node.Children.Count) {
+			VarCreate (StructureNode.Children[CCNT++]);
+		}
+		structure = STATE.PopScope ();
+
+		IDPacket newStructure = IDPacket.CreateIDPacket (STATE, StructureName, IdentityType.Structure);
+		STATE.PutStructure (newStructure, structure);
+
 		Debug ("Exit Structure");
 	}
 
-	void Expression()
+	void Expression(YSParseNode ExpressionNode,ref IDPacket id)
 	{
-		Next ();
-		Debug ("Expression: " + Node.Type + " Index " + CINDEX + " Current " + Current.Type);
-		ExpressionLogic ();
+		ExpressionLogic (ExpressionNode.Children[0], ref id);
+
+		Debug ("Exit Expression, final type: " + id.Type);
 	}
 
-	void ExpressionLogic()
+	void ExpressionLogic(YSParseNode ExpressionLogicNode, ref IDPacket id)
 	{
-		Next ();
-		Debug ("ExpressionLogic: " + Node.Type + " Index " + CINDEX + " Current " + Current.Type);
-		ExpressionBoolean ();
-		while (Next () == 0) {
-			ExpressionBoolean ();
+		ExpressionBoolean (ExpressionLogicNode.Children[0], ref id);
+		int CCNT = 1;
+		while (CCNT < ExpressionLogicNode.Children.Count) {
+			YSToken LogicalOperator = ExpressionLogicNode.Children [CCNT++];
+			ExpressionLogic (ExpressionLogicNode.Children[CCNT++], ref id);
 		}
+
+		Debug ("Exit ExpressionLogic, final type: " + value.Type);
 	}
 
-	void ExpressionBoolean()
+	void ExpressionBoolean(YSParseNode ExpressionBooleanNode, ref IDPacket id)
 	{
-		Next ();
-		Debug ("ExpressionBoolean: " + Node.Type + " Index " + CINDEX + " Current " + Current.Type);
+		ExpressionNumber (ExpressionBooleanNode.Children [0], ref id);
+		int CCNT = 1;
+		while (CCNT < ExpressionBooleanNode.Children.Count) {
+			YSToken CompOperator = ExpressionBooleanNode.Children [CCNT++];
+			ExpressionNumber (ExpressionBooleanNode.Children [CCNT++]);
+		}
+
+		Debug ("Exit ExpressionBoolean, final type: " + id.Type);
+	}
+
+	void ExpressionNumber(YSParseNode ExpressionNumberNode, ref IDPacket id)
+	{
+		ExpressionTerm (ExpressionNumberNode.Children [0], ref id);
+		int CCNT = 1;
+		while (CCNT < ExpressionNumberNode.Children.Count) {
+			YSToken CompOperator = ExpressionNumberNode.Children [CCNT++];
+			ExpressionTerm (ExpressionNumberNode.Children [CCNT++]);
+		}
+
+		Debug ("Exit ExpressionTerm, final type: " + id.Type);
+	}
+
+	void ExpressionTerm(YSParseNode ExpressionTermNode, ref IDPacket id)
+	{
+		ExpressionFactor (ExpressionTermNode.Children [0], ref id);
+		int CCNT = 1;
+		while (CCNT < ExpressionTermNode.Children.Count) {
+			YSToken CompOperator = ExpressionTermNode.Children [CCNT++];
+			ExpressionFactor (ExpressionTermNode.Children [CCNT++]);
+		}
+
+		Debug ("Exit ExpressionBoolean, final type: " + id.Type);
+	}
+
+	void ExpressionFactor(YSParseNode ExpressionFactorNode, ref IDPacket id)
+	{
+		switch (ExpressionFactorNode.Children [0].Type) {
+		case NType.Identity:
+			IdentityType IdentityType = STATE.ResolveIdentityType (ExpressionFactorNode.Children [0].Token);
+			string IdentityName = ExpressionFactorNode.Children [0].Token.Content;
+			//get the IDPacket
+			id = IDPacket.CreateIDPacket (STATE, IdentityName, IdentityType);
+			break;
+		case NType.IdentityFunction:
+			string FunctionName = ExpressionFactorNode.Children [0].Token.Content;
+			IDPacket FunctionPacket = IDPacket.CreateIDPacket (STATE, IdentityName, IdentityType.Function);
+
+			//execute the function
+			FunctionType FT;
+			if (!STATE.TryGetFunction (FunctionPacket, out FT))
+				Error ("Could not retreive function frame.");
+			STATE.PushScope (STATE.GetFunctionScope (FT));
+
+			//get params
+			int PCNT = 1;
+			while (PCNT < ExpressionFactorNode.Children.Count) {
+				FunctionParamater FP = FT.Parameters [PCNT - 1];
+				IDPacket FPPacket = IDPacket.CreateIDPacket (STATE, FP.Name, FP.Type);
+				Expression (ExpressionFactorNode.Children [PCNT++], FPPacket);
+			}
+
+			YSParseNode FunctionBlockNode = FT.Block;
+			foreach (YSParseNode FunctionStatementNode in FunctionBlockNode) {
+				if (FunctionStatementNode.Type == NType.Statement) {
+					Statement (FunctionStatementNode);
+				} else {
+					//return statement
+					IDPacket ReturnPacket = IDPacket.CreateReturnPacket(FT.Returns);
+					Expression(FunctionStatementNode, ref ReturnPacket);
+				}
+			}
+
+			break;
+		case NType.IdentityStructure:
+			string StructureName = ExpressionFactorNode.Children [0].Token.Content;
+			id = IDPacket.CreateIDPacket (STATE, StructureName, IdentityType.Structure);
+			break;
+		case NType.ExpressionFactor:
+			ExpressionFactor(ExpressionFactorNode.Children[0]);
+			break;
+		case NType.Text:
+			STATE.PutText (id, ExpressionFactorNode.Children [0].Children [0].Token.Content);
+			break;
+		case NType.Number:
+			double d;
+			if (!double.TryParse (ExpressionFactorNode.Children [0].Children [0].Token.Content, out d))
+				Error ("Could not convert token to number");
+			STATE.PutNumber (id, d);
+			break;
+		default:
+			break;
+		}
 	}
 
 	bool Terminal(out YSToken token)

@@ -64,15 +64,15 @@ public class YSStateModule	{
 
 	void FindNameScope(IDPacket packet, out StructureType scope)
 	{
-		if (packet.address.Length == 0) {
+		if (packet.Address.Length == 0) {
 			scope = TemporaryStorage;
 			return;
 		}
-		string[] path = packet.address.Split ('.');
+		string[] path = packet.Address.Split ('.');
 		scope = Global_Scope;
 		foreach (string str in path) {
 			if (!scope.Structures.TryGetValue (str, out scope)) {
-				throw new Exception ("IDPacket Address is corrupt: " + packet.address);
+				throw new Exception ("IDPacket Address is corrupt: " + packet.Address);
 			}
 		}
 	}
@@ -83,16 +83,16 @@ public class YSStateModule	{
 		FindNameScope (packet, out scope);
 		double trash;
 		if (TryGetNumber (packet, out trash))
-			scope.Primitives.Numbers [packet.name] = number;
+			scope.Primitives.Numbers [packet.Name] = number;
 		else
-			scope.Primitives.Numbers.Add (packet.name, number);
+			scope.Primitives.Numbers.Add (packet.Name, number);
 	}
 
 	public bool TryGetNumber(IDPacket packet, out double value)
 	{
 		StructureType scope;
 		FindNameScope (packet, out scope);
-		return scope.Primitives.Numbers.TryGetValue (packet.name, out value);
+		return scope.Primitives.Numbers.TryGetValue (packet.Name, out value);
 	}
 
 	public void PutBoolean(IDPacket packet, Boolean boolean)
@@ -101,16 +101,16 @@ public class YSStateModule	{
 		FindNameScope (packet, out scope);
 		bool trash;
 		if (TryGetBoolean (packet, out trash))
-			scope.Primitives.Booleans [packet.name] = boolean;
+			scope.Primitives.Booleans [packet.Name] = boolean;
 		else
-			scope.Primitives.Booleans.Add (packet.name, boolean);
+			scope.Primitives.Booleans.Add (packet.Name, boolean);
 	}
 
 	public bool TryGetBoolean(IDPacket packet, out Boolean value)
 	{
 		StructureType scope;
 		FindNameScope (packet, out scope);
-		return scope.Primitives.Booleans.TryGetValue (packet.name, out value);
+		return scope.Primitives.Booleans.TryGetValue (packet.Name, out value);
 	}
 
 	public void PutText(IDPacket packet, string text)
@@ -119,16 +119,16 @@ public class YSStateModule	{
 		FindNameScope (packet, out scope);
 		string trash;
 		if (TryGetText (packet, out trash))
-			scope.Primitives.Text [packet.name] = text;
+			scope.Primitives.Text [packet.Name] = text;
 		else
-			scope.Primitives.Text.Add (packet.name, text);
+			scope.Primitives.Text.Add (packet.Name, text);
 	}
 
 	public bool TryGetText(IDPacket packet, out string value)
 	{
 		StructureType scope;
 		FindNameScope (packet, out scope);
-		return scope.Primitives.Text.TryGetValue (packet.name, out value);
+		return scope.Primitives.Text.TryGetValue (packet.Name, out value);
 	}
 
 	public void PutStructure(IDPacket packet, StructureType structure)
@@ -137,9 +137,9 @@ public class YSStateModule	{
 		FindNameScope (packet, out scope);
 		StructureType trash;
 		if (TryGetStructure (packet, out trash))
-			scope.Structures [packet.name] = structure;
+			scope.Structures [packet.Name] = structure;
 		else
-			scope.Structures.Add (packet.name, structure);
+			scope.Structures.Add (packet.Name, structure);
 	}
 
 	public void PutParseStructure(string name, StructureType value)
@@ -151,7 +151,7 @@ public class YSStateModule	{
 	{
 		StructureType scope;
 		FindNameScope (packet, out scope);
-		return scope.Structures.TryGetValue (packet.name, out value);
+		return scope.Structures.TryGetValue (packet.Name, out value);
 	}
 
 	public bool TryGetParseStructure(string name, out StructureType value)
@@ -165,9 +165,9 @@ public class YSStateModule	{
 		FindNameScope (packet, out scope);
 		FunctionType trash;
 		if (TryGetFunction (packet, out trash))
-			scope.Functions [packet.name] = function;
+			scope.Functions [packet.Name] = function;
 		else
-			scope.Functions.Add (packet.name, function);
+			scope.Functions.Add (packet.Name, function);
 	}
 
 	public void PutParseFunction(string name, FunctionType value)
@@ -179,7 +179,7 @@ public class YSStateModule	{
 	{
 		StructureType scope;
 		FindNameScope (packet, out scope);
-		return scope.Functions.TryGetValue (packet.name, out value);
+		return scope.Functions.TryGetValue (packet.Name, out value);
 	}
 
 	public bool TryGetParseFunction (string name, out FunctionType value)
@@ -211,21 +211,21 @@ public class YSStateModule	{
 	{
 		StructureType scope;
 		FindNameScope (packet, out scope);
-		switch (packet.type) {
+		switch (packet.Type) {
 		case IdentityType.Number:
-			scope.Primitives.Numbers.Remove (packet.name);
+			scope.Primitives.Numbers.Remove (packet.Name);
 			break;
 		case IdentityType.Boolean:
-			scope.Primitives.Booleans.Remove (packet.name);
+			scope.Primitives.Booleans.Remove (packet.Name);
 			break;
 		case IdentityType.Text:
-			scope.Primitives.Text.Remove (packet.name);
+			scope.Primitives.Text.Remove (packet.Name);
 			break;
 		case IdentityType.Structure:
-			scope.Structures.Remove (packet.name);
+			scope.Structures.Remove (packet.Name);
 			break;
 		case IdentityType.Function:
-			scope.Functions.Remove (packet.name);
+			scope.Functions.Remove (packet.Name);
 			break;
 		}
 	}
@@ -325,35 +325,36 @@ public class YSStateModule	{
 
 	public struct FunctionType
 	{
-		public IdentityType returns;
-		public List<FunctionParameter> parameters;
-		public int start;
+		public IdentityType Returns;
+		public List<FunctionParameter> Parameters;
+		public int Start;
+		public YSParseNode Block;
 	}
 
 	public struct FunctionParameter
 	{
-		public string name;
-		public IdentityType type;
+		public string Name;
+		public IdentityType Type;
 	}
 
 	public FunctionType PrepareEmptyFunction()
 	{
 		FunctionType ftype = new FunctionType();
-		ftype.parameters = new List<FunctionParameter> ();
+		ftype.Parameters = new List<FunctionParameter> ();
 		return ftype;
 	}
 
 	FunctionType CopyFunction(FunctionType original)
 	{
 		FunctionType copy = PrepareEmptyFunction ();
-		copy.start = original.start;
-		copy.returns = original.returns;
+		copy.Start = original.Start;
+		copy.Returns = original.Returns;
 
-		foreach (FunctionParameter ofp in original.parameters) {
+		foreach (FunctionParameter ofp in original.Parameters) {
 			FunctionParameter copyfp = new FunctionParameter ();
-			copyfp.name = ofp.name;
-			copyfp.type = ofp.type;
-			copy.parameters.Add (copyfp);
+			copyfp.Name = ofp.Name;
+			copyfp.Type = ofp.Type;
+			copy.Parameters.Add (copyfp);
 		}
 		return copy;
 	}
@@ -377,15 +378,15 @@ public class YSStateModule	{
 		fscope = CopyStructure (current_scope);
 
 		PushScope (fscope);
-		foreach (FunctionParameter fp in ftype.parameters) {
-			if (IsPrimitive (fp.type)) {
-				CreateParserPrimitiveIdentity (fp.name, fp.type);
-			} else if (fp.type == IdentityType.Structure) {
+		foreach (FunctionParameter fp in ftype.Parameters) {
+			if (IsPrimitive (fp.Type)) {
+				CreateParserPrimitiveIdentity (fp.Name, fp.Type);
+			} else if (fp.Type == IdentityType.Structure) {
 				StructureType trash = PrepareEmptyStructure();
-				PutParseStructure (fp.name, trash);
-			} else if (fp.type == IdentityType.Function) {
+				PutParseStructure (fp.Name, trash);
+			} else if (fp.Type == IdentityType.Function) {
 				FunctionType trash = PrepareEmptyFunction();
-				PutParseFunction (fp.name, trash);
+				PutParseFunction (fp.Name, trash);
 			} else {
 				Error ("Unknown parameter type, cannot create function scope");
 			}
@@ -467,14 +468,11 @@ public class YSStateModule	{
 	}
 
 	public class IDPacket {
-		public string name { get; }
-		public IdentityType type { get; }
-		public string address { get; }
+		public string Name { get; }
+		public IdentityType Type { get; }
+		public string Address { get; }
 
-		public static IDPacket CreateTempIDPacket(IdentityType type)
-		{
-			return new IDPacket ("" + YSStateModule.SEED++, type, "");
-		}
+		static String RETURN_NAME = "_RTX0";
 
 		public static IDPacket CreateIDPacket(YSStateModule state, string name, IdentityType type)
 		{
@@ -486,11 +484,21 @@ public class YSStateModule	{
 			return new IDPacket (name, type, path);
 		}
 
+		public static IDPacket CreateReturnPacket(IdentityType Type)
+		{
+			return new IDPacket (RETURN_NAME, Type, "");
+		}
+
+		public static IDPacket CreateSystemPacket(string TempPacketName, IdentityType Type)
+		{
+			return new IDPacket (TempPacketName, Type, "");
+		}
+
 		IDPacket(string name, IdentityType type, string address)
 		{
-			this.name = name;
-			this.type = type;
-			this.address = address;
+			this.Name = name;
+			this.Type = type;
+			this.Address = address;
 		}
 	}
 
