@@ -269,34 +269,7 @@ public class YSInterpreter
 			id = IDPacket.CreateIDPacket (STATE, IdentityName, IdentityType);
 			break;
 		case NType.IdentityFunction:
-			string FunctionName = ExpressionFactorNode.Children [0].Token.Content;
-			IDPacket FunctionPacket = IDPacket.CreateIDPacket (STATE, IdentityName, IdentityType.Function);
-
-			//execute the function
-			FunctionType FT;
-			if (!STATE.TryGetFunction (FunctionPacket, out FT))
-				Error ("Could not retreive function frame.");
-			STATE.PushScope (STATE.GetFunctionScope (FT));
-
-			//get params
-			int PCNT = 1;
-			while (PCNT < ExpressionFactorNode.Children.Count) {
-				FunctionParamater FP = FT.Parameters [PCNT - 1];
-				IDPacket FPPacket = IDPacket.CreateIDPacket (STATE, FP.Name, FP.Type);
-				Expression (ExpressionFactorNode.Children [PCNT++], FPPacket);
-			}
-
-			YSParseNode FunctionBlockNode = FT.Block;
-			foreach (YSParseNode FunctionStatementNode in FunctionBlockNode) {
-				if (FunctionStatementNode.Type == NType.Statement) {
-					Statement (FunctionStatementNode);
-				} else {
-					//return statement
-					IDPacket ReturnPacket = IDPacket.CreateReturnPacket(FT.Returns);
-					Expression(FunctionStatementNode, ref ReturnPacket);
-				}
-			}
-
+			IdentityFunction (ExpressionFactorNode, ref id);
 			break;
 		case NType.IdentityStructure:
 			string StructureName = ExpressionFactorNode.Children [0].Token.Content;
@@ -316,6 +289,43 @@ public class YSInterpreter
 			break;
 		default:
 			break;
+		}
+	}
+
+	void IdentityStructure(YSParseNode StructureNode, ref IDPacket id)
+	{
+
+	}
+
+	void IdentityFunction(YSParseNode FunctionNode, ref IDPacket id)
+	{
+		string FunctionName = FunctionNode.Children [0].Token.Content;
+		IDPacket FunctionPacket = IDPacket.CreateIDPacket (STATE, IdentityName, IdentityType.Function);
+
+		//execute the function
+		FunctionType FT;
+		if (!STATE.TryGetFunction (FunctionPacket, out FT))
+			Error ("Could not retreive function frame.");
+		STATE.PushScope (STATE.GetFunctionScope (FT));
+
+		//get params
+		int PCNT = 1;
+		while (PCNT < FunctionNode.Children.Count) {
+			FunctionParamater FP = FT.Parameters [PCNT - 1];
+			IDPacket FPPacket = IDPacket.CreateIDPacket (STATE, FP.Name, FP.Type);
+			Expression (FunctionNode.Children [PCNT++], FPPacket);
+		}
+
+		YSParseNode FunctionBlockNode = FT.Block;
+		foreach (YSParseNode FunctionStatementNode in FunctionBlockNode) {
+			if (FunctionStatementNode.Type == NType.Statement) {
+				Statement (FunctionStatementNode);
+			} else {
+				//return statement
+				IDPacket ReturnPacket = IDPacket.CreateReturnPacket(FT.Returns);
+				Expression(FunctionStatementNode, ref ReturnPacket);
+				id = ReturnPacket;
+			}
 		}
 	}
 
