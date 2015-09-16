@@ -1,15 +1,8 @@
 ﻿<Properties StartupItem="Yumascript-Package/Yumascript-Package.csproj">
   <MonoDevelop.Ide.Workspace ActiveConfiguration="Debug|x86" />
-  <MonoDevelop.Ide.Workbench ActiveDocument="Yumascript-Package/Parser/YSRDParser.cs">
+  <MonoDevelop.Ide.Workbench ActiveDocument="Yumascript-Package/Interpreter/YSInterpreter.cs">
     <Files>
-      <File FileName="../../Documents/Unity Workspace/XBuilder Build 2/Assets/Scripts/Interpreter/Interpreter.cs" Line="1" Column="1" />
-      <File FileName="Yumascript-Package/Interpreter/YSStateModule.cs" Line="75" Column="1" />
-      <File FileName="Yumascript-Package/Parser/YSRDParser.cs" Line="495" Column="36" />
-      <File FileName="Yumascript-Package/Interpreter/YSInterpreter.cs" Line="181" Column="5" />
-      <File FileName="Yumascript-Package/Parser/YSToken.cs" Line="37" Column="12" />
-      <File FileName="Yumascript-Package/Program.cs" Line="29" Column="22" />
-      <File FileName="Yumascript-Package/Parser/YSLexer.cs" Line="1" Column="1" />
-      <File FileName="Yumascript-Package/Parser/YSParseNode.cs" Line="6" Column="137" />
+      <File FileName="Yumascript-Package/Interpreter/YSInterpreter.cs" Line="1" Column="1" />
     </Files>
   </MonoDevelop.Ide.Workbench>
   <MonoDevelop.Ide.DebuggingService.Breakpoints>
