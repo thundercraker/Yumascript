@@ -3,9 +3,12 @@ using System.Collections.Generic;
 using Token = YSToken;
 using Type = YSToken.TokenType;
 
-public class YSStateModule	{
+//TODO Create Function Scope from Existing function and feed it to FindNameScope
 
+public class YSStateModule	{
+	public static bool DEBUG = false;
 	/*public enum DataType { Boolean, Number, Text, List, GameObject, Structure, Unknown };*/
+	bool PARSE_MODE;
 
 	public IdentityType TranslateTokenTypeToIdentityType(Type current)
 	{
@@ -31,7 +34,7 @@ public class YSStateModule	{
 
 	}
 
-	Primitives PrepareEmptyPrimitives()
+	static Primitives PrepareEmptyPrimitives()
 	{
 		Primitives p = new Primitives ();
 		p.Numbers = new Dictionary<string, double> ();
@@ -62,24 +65,66 @@ public class YSStateModule	{
 		}
 	}
 
-	void FindNameScope(IDPacket packet, out StructureType scope)
+	void FindNameScope(IDPacket packet, out ScopeFrame scope)
 	{
+		Debug("Attempting to find scope of " + packet.Address + ", name: " + packet.Name);
 		if (packet.Address.Length == 0) {
 			scope = TemporaryStorage;
 			return;
 		}
-		string[] path = packet.Address.Split ('.');
+		string[] _path = packet.Address.Split ('/');
+		List<string> pathList = new List<string>();
+		foreach (string tok in _path)
+			if (tok != "")
+				pathList.Add (tok);
+
+		string[] path = pathList.ToArray ();
 		scope = Global_Scope;
-		foreach (string str in path) {
-			if (!scope.Structures.TryGetValue (str, out scope)) {
+		int SCNT = 0;
+		for (int i = 0; i < path.Length; i++) {
+			/*if (str.Length > 0 && !scope.Structures.TryGetValue (str, out scope) && !) {
 				throw new Exception ("IDPacket Address is corrupt: " + packet.Address);
+			}*/
+			string str = path [i];
+			if (str.Length > 0) {
+				StructureFrame schild;
+				FunctionFrame fchild;
+				if (scope.Structures.TryGetValue (str, out schild)) {
+					Debug ("[Struct] Child " + str + " found");
+					scope = StructureFrame.Appropriate(str, schild);
+					SCNT++;
+					continue;
+				} else if (scope.Functions.TryGetValue (str, out fchild)) {
+					Debug ("[Func] Child " + str + " found");
+					//scope = CreateFunctionScope (fchild);
+					//SCNT++;
+					if (i != path.Length - 1)
+						Error ("Functions donot have accessible variables");
+					break;
+				} else {
+					if(i > 0)
+						Error ("Child " + str + " NOT found");
+					//See if the next scope in the stack matches
+					ScopeFrame[] _SS = Scope_Stack.ToArray ();
+					for(; i < _SS.Length; i++)
+					{
+						string _str = path[i];
+						ScopeFrame _SF = _SS [i];
+						if (_str == _SF.Name)
+							scope = _SF;
+						else
+							Error ("Scope " + _str + " not found inside " + scope.Name);
+					}
+				}
 			}
 		}
+		Debug ("Exiting Finder");
 	}
 
 	public void PutNumber(IDPacket packet, double number)
 	{
-		StructureType scope;
+		Debug ("Putting number");
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
 		double trash;
 		if (TryGetNumber (packet, out trash))
@@ -90,14 +135,14 @@ public class YSStateModule	{
 
 	public bool TryGetNumber(IDPacket packet, out double value)
 	{
-		StructureType scope;
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
 		return scope.Primitives.Numbers.TryGetValue (packet.Name, out value);
 	}
 
 	public void PutBoolean(IDPacket packet, Boolean boolean)
 	{
-		StructureType scope;
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
 		bool trash;
 		if (TryGetBoolean (packet, out trash))
@@ -108,14 +153,14 @@ public class YSStateModule	{
 
 	public bool TryGetBoolean(IDPacket packet, out Boolean value)
 	{
-		StructureType scope;
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
 		return scope.Primitives.Booleans.TryGetValue (packet.Name, out value);
 	}
 
 	public void PutText(IDPacket packet, string text)
 	{
-		StructureType scope;
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
 		string trash;
 		if (TryGetText (packet, out trash))
@@ -126,80 +171,84 @@ public class YSStateModule	{
 
 	public bool TryGetText(IDPacket packet, out string value)
 	{
-		StructureType scope;
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
 		return scope.Primitives.Text.TryGetValue (packet.Name, out value);
 	}
 
-	public void PutStructure(IDPacket packet, StructureType structure)
+	public void PutStructure(IDPacket packet, StructureFrame structure)
 	{
-		StructureType scope;
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
-		StructureType trash;
+		StructureFrame trash;
 		if (TryGetStructure (packet, out trash))
 			scope.Structures [packet.Name] = structure;
 		else
 			scope.Structures.Add (packet.Name, structure);
 	}
 
-	public void PutParseStructure(string name, StructureType value)
+	public void PutParseStructure(string name, StructureFrame value)
 	{
+		if(!current_scope.Structures.ContainsKey(name))
 		current_scope.Structures.Add (name, value);
 	}
 
-	public bool TryGetStructure(IDPacket packet, out StructureType value)
+	public bool TryGetStructure(IDPacket packet, out StructureFrame value)
 	{
-		StructureType scope;
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
 		return scope.Structures.TryGetValue (packet.Name, out value);
 	}
 
-	public bool TryGetParseStructure(string name, out StructureType value)
+	public bool TryGetParseStructure(string name, out StructureFrame value)
 	{
 		return current_scope.Structures.TryGetValue (name, out value);
 	}
 
-	public void PutFunction(IDPacket packet, FunctionType function)
+	public void PutFunction(IDPacket packet, FunctionFrame function)
 	{
-		StructureType scope;
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
-		FunctionType trash;
+		FunctionFrame trash;
 		if (TryGetFunction (packet, out trash))
 			scope.Functions [packet.Name] = function;
 		else
 			scope.Functions.Add (packet.Name, function);
 	}
 
-	public void PutParseFunction(string name, FunctionType value)
+	public void PutParseFunction(string name, FunctionFrame value)
 	{
-		current_scope.Functions.Add (name, value);
+		if(!current_scope.Functions.ContainsKey(name))
+			current_scope.Functions.Add (name, value);
 	}
 
-	public bool TryGetFunction(IDPacket packet, out FunctionType value)
+	public bool TryGetFunction(IDPacket packet, out FunctionFrame value)
 	{
-		StructureType scope;
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
 		return scope.Functions.TryGetValue (packet.Name, out value);
 	}
 
-	public bool TryGetParseFunction (string name, out FunctionType value)
+	public bool TryGetParseFunction (string name, out FunctionFrame value)
 	{
 		return current_scope.Functions.TryGetValue (name, out value);
 	}
 
-	public void CreateParserPrimitiveIdentity(string name, IdentityType type)
+	public void CreateParsePrimitive(string name, IdentityType type)
 	{
-		Debug ("Adding var name: " + name + " type: " + type + " in scope level " + Scope_Stack.Count);
+		Debug ("Adding var name: " + name + " type: " + type + " in " + current_scope.Name + " scope level " + Scope_Stack.Count);
 		switch (type) {
 		case IdentityType.Number:
-			//scope.Primitives.Numbers.Add (name, 0);
-			current_scope.Primitives.Numbers.Add(name,0);
+			if(!current_scope.Primitives.Numbers.ContainsKey(name))
+				current_scope.Primitives.Numbers.Add(name,0);
 			break;
 		case IdentityType.Boolean:
-			current_scope.Primitives.Booleans.Add (name, false);
+			if(!current_scope.Primitives.Numbers.ContainsKey(name))
+				current_scope.Primitives.Booleans.Add (name, false);
 			break;
 		case IdentityType.Text:
-			current_scope.Primitives.Text.Add (name, "");
+			if(!current_scope.Primitives.Numbers.ContainsKey(name))
+				current_scope.Primitives.Text.Add (name, "");
 			break;
 		default:
 			Console.WriteLine ("Not a primitive type");
@@ -209,7 +258,7 @@ public class YSStateModule	{
 
 	public void RemoveIdentity(IDPacket packet)
 	{
-		StructureType scope;
+		ScopeFrame scope;
 		FindNameScope (packet, out scope);
 		switch (packet.Type) {
 		case IdentityType.Number:
@@ -230,65 +279,204 @@ public class YSStateModule	{
 		}
 	}
 
-	public struct StructureType
+	public void COPY(IDPacket TO, IDPacket FROM)
+	{
+		if (TO.Type != FROM.Type) {
+			Error ("Attempting to copy non-matching types");
+		}
+
+		if (TO.Type == IdentityType.Number) {
+			double d;
+			TryGetNumber (FROM, out d);
+			PutNumber (TO, d);
+		} else if (TO.Type == IdentityType.Boolean) {
+			bool b;
+			TryGetBoolean (FROM, out b);
+			PutBoolean (TO, b);
+		} else if (TO.Type == IdentityType.Text) {
+			string t;
+			TryGetText (FROM, out t);
+			PutText (TO, t);
+		} else if (TO.Type == IdentityType.Structure) {
+			StructureFrame sf;
+			TryGetStructure (FROM, out sf);
+			PutStructure (TO, sf);
+		} else if (TO.Type == IdentityType.Function) {
+			FunctionFrame ff;
+			TryGetFunction (FROM, out ff);
+			PutFunction (TO, ff);
+		} else {
+			Error ("Unknown Idenitity Type");
+		}
+	}
+
+	public class StructureFrame
 	{
 		public Primitives Primitives;
-		public Dictionary<string, StructureType> Structures;
-		public Dictionary<string, FunctionType> Functions;
+		public Dictionary<string, StructureFrame> Structures;
+		public Dictionary<string, FunctionFrame> Functions;
+
+		public StructureFrame()
+		{
+			Primitives = YSStateModule.PrepareEmptyPrimitives ();
+			Structures = new Dictionary<string, StructureFrame> ();
+			Functions = new Dictionary<string, FunctionFrame> ();
+		}
+
+		public StructureFrame(StructureFrame original)
+		{
+			Primitives = YSStateModule.PrepareEmptyPrimitives ();
+			Structures = new Dictionary<string, StructureFrame> ();
+			Functions = new Dictionary<string, FunctionFrame> ();
+
+			Merge(original);
+		}
+
+		public static ScopeFrame Appropriate(string name, StructureFrame sframe)
+		{
+			ScopeFrame scope = new ScopeFrame ();
+			scope.Type = ScopeFrame.FrameTypes.Structure;
+			scope.Name = name;
+
+			scope.Primitives = sframe.Primitives;
+			scope.Structures = sframe.Structures;
+			scope.Functions = sframe.Functions;
+
+			return scope;
+		}
+
+		public void MergeForScope(string StructureName, StructureFrame original)
+		{
+			Structures.Remove (StructureName);
+			Merge (original);
+		}
+
+		public void Merge(StructureFrame merge)
+		{
+			//Copy primitives
+			foreach (string key in merge.Primitives.Numbers.Keys) {
+				double val; 
+				merge.Primitives.Numbers.TryGetValue (key, out val);
+				Primitives.Numbers.Add (key, val);
+			}
+
+			foreach (string key in merge.Primitives.Booleans.Keys) {
+				bool val; 
+				merge.Primitives.Booleans.TryGetValue (key, out val);
+				Primitives.Booleans.Add (key, val);
+			}
+
+			foreach (string key in merge.Primitives.Text.Keys) {
+				string val; 
+				merge.Primitives.Text.TryGetValue (key, out val);
+				Primitives.Text.Add (key, val);
+			}
+
+			//copy structures
+			foreach (string key in merge.Structures.Keys) {
+				StructureFrame oval; 
+				merge.Structures.TryGetValue (key, out oval);
+				StructureFrame cval = new StructureFrame (oval);
+				Structures.Add (key, cval);
+			}
+
+			//copy functions
+			foreach (string key in merge.Functions.Keys) {
+				FunctionFrame oval; 
+				merge.Functions.TryGetValue (key, out oval);
+				FunctionFrame cval = new FunctionFrame (oval);
+				Functions.Add (key, cval);
+			}
+		}
+
+		protected StructureFrame UpdateOriginal(StructureFrame original) {
+			List<string> keys;
+
+			keys = new List<string>(original.Primitives.Numbers.Keys);
+			foreach (string key in keys) {
+				if(Primitives.Numbers.ContainsKey(key))
+					original.Primitives.Numbers [key] = Primitives.Numbers [key];
+			}
+
+			keys = new List<string>(original.Primitives.Booleans.Keys);
+			foreach (string key in keys) {
+				/*bool val; 
+				this.Primitives.Booleans.TryGetValue (key, out val);
+				original.Primitives.Booleans[key] = val;*/
+				if(Primitives.Booleans.ContainsKey(key))
+					original.Primitives.Booleans [key] = Primitives.Booleans [key];
+			}
+
+			keys = new List<string>(original.Primitives.Text.Keys);
+			foreach (string key in keys) {
+				/*string val; 
+				this.Primitives.Text.TryGetValue (key, out val);
+				original.Primitives.Text[key] = val;*/
+				if(Primitives.Text.ContainsKey(key))
+					original.Primitives.Text [key] = Primitives.Text [key];
+			}
+
+			keys = new List<string>(original.Structures.Keys);
+			foreach (string key in keys) {
+				if(Structures.ContainsKey(key))
+					original.Structures [key] = Structures [key];
+			}
+
+			keys = new List<string>(original.Functions.Keys);
+			foreach (string key in keys) {
+				if(Functions.ContainsKey(key))
+					original.Functions [key] = Functions [key];
+			}
+
+			return original;
+		}
 	}
 
-	public StructureType PrepareEmptyStructure()
+	public class ScopeFrame : StructureFrame
 	{
-		StructureType stype = new StructureType();
-		stype.Primitives = PrepareEmptyPrimitives ();
-		stype.Structures = new Dictionary<string, StructureType> ();
-		stype.Functions = new Dictionary<string, FunctionType> ();
-		return stype;
-	}
+		public string Name;
+		public FrameTypes Type;
 
-	StructureType CopyStructure(StructureType original)
-	{
-		StructureType copy = PrepareEmptyStructure ();
+		public enum FrameTypes { None, Structure, Function, Loop }
 
-		//Copy primitives
-		foreach (string key in original.Primitives.Numbers.Keys) {
-			double val; 
-			original.Primitives.Numbers.TryGetValue (key, out val);
-			copy.Primitives.Numbers.Add (key, val);
+
+		public ScopeFrame() : base()
+		{
+			Name = "";
+			Type = FrameTypes.None;
 		}
 
-		foreach (string key in original.Primitives.Booleans.Keys) {
-			bool val; 
-			original.Primitives.Booleans.TryGetValue (key, out val);
-			copy.Primitives.Booleans.Add (key, val);
+		public ScopeFrame(string Name, FrameTypes Type) : base()
+		{
+			this.Name = Name;
+			this.Type = Type;
 		}
 
-		foreach (string key in original.Primitives.Text.Keys) {
-			string val; 
-			original.Primitives.Text.TryGetValue (key, out val);
-			copy.Primitives.Text.Add (key, val);
+		public ScopeFrame(ScopeFrame original) : base((StructureFrame) original)
+		{
+			Name = original.Name;
+			Type = original.Type;
 		}
 
-		//copy structures
-		foreach (string key in original.Structures.Keys) {
-			StructureType oval; 
-			original.Structures.TryGetValue (key, out oval);
-			StructureType cval = CopyStructure (oval);
-			copy.Structures.Add (key, cval);
+		public ScopeFrame(StructureFrame original, string Name, FrameTypes Type) : base((StructureFrame) original)
+		{
+			//this.Primitives = original.Primitives;
+			//this.Structures = original.Structures;
+			//this.Functions = original.Functions;
+			this.Name = Name;
+			this.Type = Type;
 		}
 
-		//copy functions
-		foreach (string key in original.Functions.Keys) {
-			FunctionType oval; 
-			original.Functions.TryGetValue (key, out oval);
-			FunctionType cval = CopyFunction (oval);
-			copy.Functions.Add (key, cval);
+		public void Merge(ScopeFrame merge){
+			base.Merge ((StructureFrame)merge);
 		}
 
-		return copy;
-	}
+		public ScopeFrame UpdateOriginal(ScopeFrame original) {
+			return (ScopeFrame)base.UpdateOriginal ((StructureFrame)original);
+		}
+	}  
 
-	void RegisterStructure (string name, StructureType stype)
+	void RegisterStructure (string name, StructureFrame stype)
 	{
 		if (!IdentityExists (name))
 			current_scope.Structures.Add (name, stype);
@@ -301,7 +489,7 @@ public class YSStateModule	{
 		return current_scope.Structures.TryGetValue (name, out structure);
 	}*/
 
-	public bool TryGetStructureChildIdentityType(StructureType scope, string name, ref IdentityType itype)
+	public bool TryGetStructureChildIdentityType(StructureFrame scope, string name, ref IdentityType itype)
 	{
 		if (scope.Primitives.Numbers.ContainsKey (name)) {
 			itype = IdentityType.Number;
@@ -323,43 +511,52 @@ public class YSStateModule	{
 		}
 	}
 
-	public struct FunctionType
+	public class FunctionFrame
 	{
 		public IdentityType Returns;
 		public List<FunctionParameter> Parameters;
 		public int Start;
 		public YSParseNode Block;
+
+		public FunctionFrame()
+		{
+			Parameters = new List<FunctionParameter> ();
+		}
+
+		public FunctionFrame(FunctionFrame original)
+		{
+			Start = original.Start;
+			Returns = original.Returns;
+			Parameters = new List<FunctionParameter> ();
+
+			foreach (FunctionParameter ofp in original.Parameters) {
+				FunctionParameter copyfp = new FunctionParameter(ofp);
+				Parameters.Add (copyfp);
+			}
+		}
 	}
 
-	public struct FunctionParameter
+	public class FunctionParameter
 	{
 		public string Name;
 		public IdentityType Type;
-	}
 
-	public FunctionType PrepareEmptyFunction()
-	{
-		FunctionType ftype = new FunctionType();
-		ftype.Parameters = new List<FunctionParameter> ();
-		return ftype;
-	}
+		public FunctionParameter() {}
 
-	FunctionType CopyFunction(FunctionType original)
-	{
-		FunctionType copy = PrepareEmptyFunction ();
-		copy.Start = original.Start;
-		copy.Returns = original.Returns;
-
-		foreach (FunctionParameter ofp in original.Parameters) {
-			FunctionParameter copyfp = new FunctionParameter ();
-			copyfp.Name = ofp.Name;
-			copyfp.Type = ofp.Type;
-			copy.Parameters.Add (copyfp);
+		public FunctionParameter(string Name, IdentityType Type)
+		{
+			this.Name = Name;
+			this.Type = Type;
 		}
-		return copy;
+
+		public FunctionParameter(FunctionParameter original)
+		{
+			this.Name = original.Name;
+			this.Type = original.Type;
+		}
 	}
 
-	void RegisterFunction(string name, FunctionType ftype)
+	void RegisterFunction(string name, FunctionFrame ftype)
 	{
 		if (!IdentityExists (name))
 			current_scope.Functions.Add (name, ftype);
@@ -367,32 +564,52 @@ public class YSStateModule	{
 			Error ("Function with name " + name + " already exists.");
 	}
 
-	public bool TryGetFunction(string name, ref FunctionType function)
+	public bool TryGetFunction(string name, ref FunctionFrame function)
 	{
 		return current_scope.Functions.TryGetValue (name, out function);
 	}
 
-	public StructureType GetFunctionScope(FunctionType ftype)
+	public ScopeFrame CreateParseFunctionScope(FunctionFrame ftype, string FunctionName)
 	{
-		StructureType fscope = PrepareEmptyStructure ();
-		fscope = CopyStructure (current_scope);
+		ScopeFrame fscope = new ScopeFrame (current_scope);
 
+		fscope.Name = FunctionName;
+		fscope.Type = ScopeFrame.FrameTypes.Function;
 		PushScope (fscope);
 		foreach (FunctionParameter fp in ftype.Parameters) {
 			if (IsPrimitive (fp.Type)) {
-				CreateParserPrimitiveIdentity (fp.Name, fp.Type);
+				CreateParsePrimitive (fp.Name, fp.Type);
 			} else if (fp.Type == IdentityType.Structure) {
-				StructureType trash = PrepareEmptyStructure();
+				StructureFrame trash = new StructureFrame();
 				PutParseStructure (fp.Name, trash);
 			} else if (fp.Type == IdentityType.Function) {
-				FunctionType trash = PrepareEmptyFunction();
+				FunctionFrame trash = new FunctionFrame();
 				PutParseFunction (fp.Name, trash);
 			} else {
 				Error ("Unknown parameter type, cannot create function scope");
 			}
 		}
-		PopScope ();
-		return fscope;
+		return PopScopeNoSave ();
+	}
+
+	public ScopeFrame CreateFunctionScope(FunctionFrame ftype, string FunctionName, List<IDPacket> Bindings)
+	{
+		ScopeFrame fscope = CreateParseFunctionScope (ftype, FunctionName);
+
+		//delete function frame inside scope
+		fscope.Functions.Remove (FunctionName);
+
+		PushScope (fscope);
+		int BINDCNT = 0;
+		foreach (FunctionParameter fp in ftype.Parameters) {
+			IDPacket Binding = Bindings [BINDCNT];
+			IDPacket Address = IDPacket.CreateIDPacket (this, fp.Name, Binding.Type);
+			if (Binding.Type != fp.Type)
+				Error ("Binding Error: Parameter type mismatch, expected: " + fp.Type + " got " + Binding.Type);
+
+			COPY (Address, Binding);
+		}
+		return PopScopeNoSave ();
 	}
 
 	public bool IdentityExists(string name)
@@ -441,14 +658,13 @@ public class YSStateModule	{
 		return IdentityType.Unknown;
 	}
 
-	StructureType Global_Scope;
-	StructureType TemporaryStorage;
-	Stack<StructureType> Scope_Stack;
+	ScopeFrame Global_Scope;
+	ScopeFrame TemporaryStorage;
+	Stack<ScopeFrame> Scope_Stack;
 
 	public static long SEED = 0;
 
-	StructureType current_scope
-	{
+	public ScopeFrame current_scope {
 		get {
 			if (Scope_Stack.Count == 0)
 				return Global_Scope;
@@ -457,31 +673,84 @@ public class YSStateModule	{
 		}
 	}
 
-	public void PushScope(StructureType push)
-	{
-		Scope_Stack.Push (push);
+	public ScopeFrame.FrameTypes CurrentFrameType() {
+		return current_scope.Type;
 	}
 
-	public StructureType PopScope()
+	public string CurrentFrameName() {
+		return current_scope.Name;
+	}
+
+	public void PushScope(ScopeFrame push)
+	{
+		if (!PARSE_MODE && push.Name == "")
+			Error ("Scope above Level 0 cannot have no name");
+		Scope_Stack.Push (push);
+	}
+	/*
+	public void PushStructureScope(ScopeFrame push, string Name)
+	{
+		ScopeFrame nsf = new ScopeFrame (push);
+		nsf.Name = Name;
+		nsf.Type = ScopeFrame.FrameTypes.Structure;
+		Scope_Stack.Push (nsf);
+	}
+
+	public void PushFunctionScope(ScopeFrame push, string Name)
+	{
+		ScopeFrame nsf = new ScopeFrame (push);
+		nsf.Name = Name;
+		nsf.Type = ScopeFrame.FrameTypes.Function;
+		Scope_Stack.Push (nsf);
+	}
+	*/
+	public ScopeFrame PopScope()
+	{
+		if (Scope_Stack.Count > 0) {
+			ScopeFrame pframe = Scope_Stack.Pop ();
+			//update new values
+			ScopeFrame current = (Scope_Stack.Count < 1) ? Global_Scope : Scope_Stack.Pop ();
+			bool global_used = (Scope_Stack.Count < 1) ? true : false;
+			Debug ("Popping.. Previous frame " + pframe.Name + " Current Frame " + current.Name);
+			current = pframe.UpdateOriginal (current);
+			if(!global_used)
+				Scope_Stack.Push (current);
+			return pframe;
+		} else {
+			Error ("Cannot pop empty stack");
+			return null;
+		}
+	}
+
+	public ScopeFrame PopScopeNoSave()
 	{
 		return Scope_Stack.Pop ();
 	}
 
 	public class IDPacket {
-		public string Name { get; }
-		public IdentityType Type { get; }
-		public string Address { get; }
+		public string Name { get; set; }
+		public IdentityType Type { get; set; }
+		public string Address { get; set; }
 
+		static long SYSTEM_SEED = 0;
 		static String RETURN_NAME = "_RTX0";
+
+		public IDPacket(IDPacket copy)
+		{
+			Name = copy.Name;
+			Type = copy.Type;
+			Address = copy.Address;
+		}
 
 		public static IDPacket CreateIDPacket(YSStateModule state, string name, IdentityType type)
 		{
-			StructureType[] scope_stack = state.Scope_Stack.ToArray ();
-			string path = ".";
+			ScopeFrame[] scope_stack = state.Scope_Stack.ToArray ();
+			string path = "/";
 			for (int i = scope_stack.Length - 1; i >= 0; i--) {
-				path += scope_stack [i];
+				path += scope_stack [i].Name + "/";
 			}
-			return new IDPacket (name, type, path);
+			state.Debug ("Created IDPacket with path: " + path.Trim() + " name: " + name);
+			return new IDPacket (name, type, path.Trim());
 		}
 
 		public static IDPacket CreateReturnPacket(IdentityType Type)
@@ -491,7 +760,7 @@ public class YSStateModule	{
 
 		public static IDPacket CreateSystemPacket(string TempPacketName, IdentityType Type)
 		{
-			return new IDPacket (TempPacketName, Type, "");
+			return new IDPacket (TempPacketName + (SYSTEM_SEED++), Type, "");
 		}
 
 		IDPacket(string name, IdentityType type, string address)
@@ -502,24 +771,231 @@ public class YSStateModule	{
 		}
 	}
 
-	public YSStateModule ()
+	//methods for actual operations
+	public IDPacket LOGICAL_OP(IDPacket OP1, IDPacket OP2, Token Operator)
+	{
+		if (Operator.Type == Type.And) {
+			return LOGICAL_AND (OP1, OP2);
+		} else if (Operator.Type == Type.Or) {
+			return LOGICAL_OR (OP1, OP2);
+		} else {
+			Error ("Operator not recognized");
+			return null;
+		}
+	}
+
+	IDPacket LOGICAL_AND(IDPacket OP1, IDPacket OP2)
+	{
+		bool op1, op2;
+		TryGetBoolean (OP1, out op1);
+		TryGetBoolean (OP2, out op2);
+		Debug ("Operation AND, op1: " + op1 + ", " + op2);
+		IDPacket RES = IDPacket.CreateSystemPacket ("ANDOP", IdentityType.Boolean);
+		PutBoolean (RES, op1 && op2);
+		return RES;
+	}
+
+	IDPacket LOGICAL_OR(IDPacket OP1, IDPacket OP2)
+	{
+		bool op1, op2;
+		TryGetBoolean (OP1, out op1);
+		TryGetBoolean (OP2, out op2);
+		Debug ("Operation OR, op1: " + op1 + ", " + op2);
+		IDPacket RES = IDPacket.CreateSystemPacket ("OROP", IdentityType.Boolean);
+		PutBoolean (RES, op1 || op2);
+		return RES;
+	}
+
+	public IDPacket LOGICAL_NOT(IDPacket OP1)
+	{
+		bool op1;
+		TryGetBoolean (OP1, out op1);
+		Debug ("Operation OR, op1: " + op1);
+		IDPacket RES = IDPacket.CreateSystemPacket ("NOTOP", IdentityType.Boolean);
+		PutBoolean (RES, !op1);
+		return RES;
+	}
+
+	//Comparisions
+	public IDPacket COMP_OP(IDPacket OP1, IDPacket OP2, Token Operator)
+	{
+		if (Operator.Type == Type.GreaterThan) {
+			return COMP_GT (OP1, OP2);
+		} else if (Operator.Type == Type.LessThan) {
+			return COMP_LT (OP1, OP2);
+		} else if (Operator.Type == Type.Equals) {
+			return COMP_EQ (OP1, OP2);
+		} else if (Operator.Type == Type.GreaterThanEqual) {
+			return LOGICAL_OR(COMP_GT (OP1, OP2), COMP_EQ(OP1, OP2));
+		} else if (Operator.Type == Type.LessThanEqual) {
+			return LOGICAL_OR(COMP_LT (OP1, OP2), COMP_EQ(OP1, OP2));
+		} else {
+			Error ("Operator not recognized");
+			return null;
+		}
+	}
+
+	IDPacket COMP_GT(IDPacket OP1, IDPacket OP2)
+	{
+		double op1, op2;
+		TryGetNumber (OP1, out op1);
+		TryGetNumber (OP2, out op2);
+		Debug ("Operation >, op1: " + op1 + ", " + op2);
+		IDPacket RES = IDPacket.CreateSystemPacket (">OP", IdentityType.Number);
+		PutBoolean (RES, op1 > op2);
+		return RES;
+	}
+
+	IDPacket COMP_LT(IDPacket OP1, IDPacket OP2)
+	{
+		double op1, op2;
+		TryGetNumber (OP1, out op1);
+		TryGetNumber (OP2, out op2);
+		Debug ("Operation <, op1: " + op1 + ", " + op2);
+		IDPacket RES = IDPacket.CreateSystemPacket ("<OP", IdentityType.Number);
+		PutBoolean (RES, op1 < op2);
+		return RES;
+	}
+
+	public IDPacket COMP_EQ(IDPacket OP1, IDPacket OP2)
+	{
+		IDPacket RES = null;
+		bool VAL = false;
+		if (OP1.Type == IdentityType.Number) {
+			double op1, op2;
+			TryGetNumber (OP1, out op1);
+			TryGetNumber (OP2, out op2);
+			Debug ("Operation(Number) ==, op1: " + op1 + ", " + op2);
+			RES = IDPacket.CreateSystemPacket ("==OP", IdentityType.Number);
+			VAL = op1 == op2;
+		} else if (OP1.Type == IdentityType.Boolean) {
+			double op1, op2;
+			TryGetNumber (OP1, out op1);
+			TryGetNumber (OP2, out op2);
+			Debug ("Operation(Boolean) ==, op1: " + op1 + ", " + op2);
+			RES = IDPacket.CreateSystemPacket ("==OP", IdentityType.Number);
+			VAL = op1 == op2;
+		} else if (OP1.Type == IdentityType.Text) {
+			string op1, op2;
+			TryGetText (OP1, out op1);
+			TryGetText (OP2, out op2);
+			Debug ("Operation(Text) ==, op1: " + op1 + ", " + op2);
+			RES = IDPacket.CreateSystemPacket ("==OP", IdentityType.Number);
+			VAL = op1 == op2;
+		} else {
+			Error ("Comparing incompatible types");
+			return null;
+		}
+		PutBoolean (RES, VAL);
+		return RES;
+	}
+
+	//Arithmetic
+	public IDPacket MATH_OP(IDPacket OP1, IDPacket OP2, Token Operator)
+	{
+		if (Operator.Type == Type.Plus) {
+			return MATH_PLUS (OP1, OP2);
+		} else if (Operator.Type == Type.Minus) {
+			return MATH_MINUS (OP1, OP2);
+		} else if (Operator.Type == Type.Asterisk) {
+			return MATH_MUL (OP1, OP2);
+		} else if (Operator.Type == Type.Slash) {
+			return MATH_DIV (OP1, OP2);
+		} else if (Operator.Type == Type.Percentage) {
+			return MATH_MOD (OP1, OP2);
+		} else {
+			Error ("Operator not recognized");
+			return null;
+		}
+	}
+
+	IDPacket MATH_PLUS(IDPacket OP1, IDPacket OP2)
+	{
+		double op1, op2;
+		TryGetNumber (OP1, out op1);
+		TryGetNumber (OP2, out op2);
+		Debug ("Operation +, op1: " + op1 + ", " + op2);
+		IDPacket RES = IDPacket.CreateSystemPacket ("+OP", IdentityType.Number);
+		PutNumber (RES, op1 + op2);
+		return RES;
+	}
+
+	public IDPacket MATH_MINUS(IDPacket OP1, IDPacket OP2)
+	{
+		double op1, op2;
+		TryGetNumber (OP1, out op1);
+		TryGetNumber (OP2, out op2);
+		Debug ("Operation -, op1: " + op1 + ", " + op2);
+		IDPacket RES = IDPacket.CreateSystemPacket ("-OP", IdentityType.Number);
+		PutNumber (RES, op1 - op2);
+		return RES;
+	}
+
+	IDPacket MATH_MUL(IDPacket OP1, IDPacket OP2)
+	{
+		double op1, op2;
+		TryGetNumber (OP1, out op1);
+		TryGetNumber (OP2, out op2);
+		Debug ("Operation *, op1: " + op1 + ", " + op2);
+		IDPacket RES = IDPacket.CreateSystemPacket ("*OP", IdentityType.Number);
+		PutNumber (RES, op1 * op2);
+		return RES;
+	}
+
+	IDPacket MATH_DIV(IDPacket OP1, IDPacket OP2)
+	{
+		double op1, op2;
+		TryGetNumber (OP1, out op1);
+		TryGetNumber (OP2, out op2);
+		Debug ("Operation /, op1: " + op1 + ", " + op2);
+		IDPacket RES = IDPacket.CreateSystemPacket ("DIVOP", IdentityType.Number);
+		PutNumber (RES, op1 / op2);
+		return RES;
+	}
+
+	IDPacket MATH_MOD(IDPacket OP1, IDPacket OP2)
+	{
+		double op1, op2;
+		TryGetNumber (OP1, out op1);
+		TryGetNumber (OP2, out op2);
+		Debug ("Operation %, op1: " + op1 + ", " + op2);
+		IDPacket RES = IDPacket.CreateSystemPacket ("%OP", IdentityType.Number);
+		PutNumber (RES, op1 % op2);
+		return RES;
+	}
+
+	//string
+	public IDPacket STR_CONCAT(IDPacket OP1, IDPacket OP2)
+	{
+		string op1, op2;
+		TryGetText (OP1, out op1);
+		TryGetText (OP2, out op2);
+		Debug ("Operation +, op1: " + op1 + ", " + op2);
+		IDPacket RES = IDPacket.CreateSystemPacket ("CONCATOP", IdentityType.Text);
+		PutText (RES, op1 + op2);
+		return RES;
+	}
+
+	public YSStateModule (bool parse_mode)
 	{
 		Debug ("Creating scope...");
-		Global_Scope = PrepareEmptyStructure ();
-		Scope_Stack = new Stack<StructureType> ();
+		PARSE_MODE = parse_mode;
+		Global_Scope = new ScopeFrame ("", ScopeFrame.FrameTypes.None);
+		Scope_Stack = new Stack<ScopeFrame> ();
 
-		TemporaryStorage = PrepareEmptyStructure ();
+		TemporaryStorage = new ScopeFrame();
 	}
 
 	public void Error(string s)
 	{
-		Console.WriteLine("[Error] " + s);
+		Console.WriteLine("[State System Error] " + s);
 		throw new YSRDParser.ParseException ("Interpreter (Semantic) Exception");
 	}
 
 	public void Debug(string s)
 	{
-		Console.WriteLine("[Debug] " + s);
+		if(DEBUG)
+			Console.WriteLine("[Debug] " + s);
 	}
 }
 

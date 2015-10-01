@@ -1,12 +1,25 @@
 ﻿<Properties StartupItem="Yumascript-Package/Yumascript-Package.csproj">
   <MonoDevelop.Ide.Workspace ActiveConfiguration="Debug|x86" />
-  <MonoDevelop.Ide.Workbench ActiveDocument="Yumascript-Package/Interpreter/YSInterpreter.cs">
+  <MonoDevelop.Ide.Workbench ActiveDocument="Yumascript-Package/Parser/YSRDParser.cs">
     <Files>
-      <File FileName="Yumascript-Package/Interpreter/YSInterpreter.cs" Line="1" Column="1" />
+      <File FileName="Yumascript-Package/Interpreter/YSInterpreter.cs" Line="39" Column="39" />
+      <File FileName="Yumascript-Package/Parser/YSRDParser.cs" Line="1" Column="1" />
+      <File FileName="Yumascript-Package/Program.cs" Line="30" Column="30" />
+      <File FileName="Yumascript-Package/Interpreter/YSStateModule.cs" Line="75" Column="75" />
+      <File FileName="Yumascript-Package/Parser/YSToken.cs" Line="40" Column="40" />
+      <File FileName="Yumascript-Package/Parser/YSLexer.cs" Line="54" Column="54" />
+      <File FileName="Yumascript-Package/Parser/YSWhiteSpaceMatcher.cs" Line="45" Column="45" />
+      <File FileName="Yumascript-Package/Parser/YSTokenizer.cs" Line="1" Column="1" />
+      <File FileName="Yumascript-Package/Parser/YSParseNode.cs" Line="80" Column="80" />
     </Files>
   </MonoDevelop.Ide.Workbench>
   <MonoDevelop.Ide.DebuggingService.Breakpoints>
-    <BreakpointStore />
+    <BreakpointStore>
+      <Breakpoint file="/home/yumashish/Documents/Projects/Yumascript/Yumascript-Package/Interpreter/YSStateModule.cs" line="720" column="1" />
+      <Breakpoint file="/home/yumashish/Documents/Projects/Yumascript/Yumascript-Package/Interpreter/YSStateModule.cs" line="608" column="1" />
+      <Breakpoint file="/home/yumashish/Documents/Projects/Yumascript/Yumascript-Package/Parser/YSRDParser.cs" line="317" column="1" />
+      <Breakpoint file="/home/yumashish/Documents/Projects/Yumascript/Yumascript-Package/Parser/YSRDParser.cs" line="234" column="1" />
+    </BreakpointStore>
   </MonoDevelop.Ide.DebuggingService.Breakpoints>
   <MonoDevelop.Ide.DebuggingService.PinnedWatches />
 </Properties>

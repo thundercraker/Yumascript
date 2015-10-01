@@ -1,0 +1,25 @@
+structure t 
+{ 
+	number one; 
+	text two; 
+}
+function square(number n) : number 
+{ 
+	return n*n; 
+}
+output square(10);
+number n = 5;
+number x = square(n);
+output "hello" + "x";
+set t.one = x;
+set t.two = "Eyy";
+output t.one;
+while (n < 10) do
+{
+	output n;
+	set n = n + 1;
+}
+if(n equals 10) then
+{
+	output "N is 10";
+}

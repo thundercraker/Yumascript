@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Linq;
 
 	class MainClass
@@ -16,16 +17,38 @@ using System.Linq;
 			lexer.Tokenizer.PrintTokenIndices();*/
 		String raw = "number n = 1; n = n * n; function n (number n) : number { return n * n; }";
 
-		raw = "structure t { number one; text two; } " +
-			"function square(number n) : number { return n*n; } " +
-			"square(10); " +
+		/*raw = "structure t { number one; text two; } " +
+			"function square(number n) : number { return n*n+10; } " +
+			//"square(10); " +
 			"number n = 5; " +
 			"number x = square(n); " +
-			"t.one = x; " +
-			"t.two = \"Eyy\";";
+			"set t.one = x; " +
+			"set t.two = \"Eyy\";" +
+			"output t.one;";*/
+
+		try
+		{   // Open the text file using a stream reader.
+			using (StreamReader sr = new StreamReader("YSCode.ys"))
+			{
+				// Read the stream to a string, and write the string to the console.
+				raw = sr.ReadToEnd();
+				//Console.WriteLine(line);
+			}
+		}
+		catch (Exception e)
+		{
+			Console.WriteLine("The file could not be read:");
+			Console.WriteLine(e.Message);
+		}
+
+		//set debug mode
+		YSLexer.DEBUG 		= false;
+		YSRDParser.DEBUG	= false;
+		YSInterpreter.DEBUG = false;
+		YSStateModule.DEBUG	= false;
 
 		YSRDParser parser = new YSRDParser (raw);
 		YSInterpreter interpreter = new YSInterpreter (parser.PopLast());
-		interpreter.Program ();
+		//interpreter.Program (interpreter.No);
 		}
 	}
