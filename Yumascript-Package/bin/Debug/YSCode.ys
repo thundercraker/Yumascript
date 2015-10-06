@@ -12,7 +12,7 @@ number n = 5;
 number x = square(n);
 output "hello" + "x";
 set t.one = x;
-set t.two = "Eyy";
+set t.two = "Eyy"
 output t.one;
 while (n < 10) do
 {

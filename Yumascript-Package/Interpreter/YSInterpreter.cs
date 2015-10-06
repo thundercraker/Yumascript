@@ -8,132 +8,87 @@ using FunctionFrame 	= YSStateModule.FunctionFrame;
 using FunctionParamater = YSStateModule.FunctionParameter;
 using Primitives 	= YSStateModule.Primitives;
 using IDPacket = YSStateModule.IDPacket;
+using StateException = YSStateModule.StateException;
 
 public class YSInterpreter
 {
 	public static bool DEBUG = false;
+	public static bool VERBOSE = false;
+	public static int ERR_ACCEPT = 1;
 
 	struct NodeIndex {
 		public YSParseNode Node;
 		public int Index;
 	}
-	Stack<NodeIndex> Memory;
-
+	//Stack<NodeIndex> Memory;
+	public YSParseNode Current;
 	YSParseNode Node;
-	int CINDEX = 0;
+	//int CINDEX = 0;
 	YSStateModule STATE;
-
-	YSParseNode Current {
-		get {
-
-			return Node.Children [CINDEX];
-		}
-	}
-
-	NType CType {
-		get {
-			return Current.Type;
-		}
-	}
-
-	bool EOF {
-		get {
-			return CINDEX == -1;
-		}
-	}
-
-	int LastChange = 0;
-
-	bool ToChild
-	{
-		get{
-			return LastChange == 1;
-		}
-	}
-
-	void MEMPUSH()
-	{
-		NodeIndex cur = new NodeIndex ();
-		cur.Node = Node;
-		cur.Index = CINDEX;
-		Memory.Push (cur);
-	}
-
-	void MEMPOP()
-	{
-		NodeIndex pop = Memory.Pop();
-		CINDEX = pop.Index;
-		Node = pop.Node;
-	}
-
-	HashSet<YSParseNode> Explored;
-
-	int Next()
-	{
-		//if the current has children: next is the first child
-		if (Current.Children.Count > 0 && !Explored.Contains(Current )) {
-			int OCINDEX = CINDEX;
-			MEMPUSH ();
-			YSParseNode parent = Node;
-			Node = Current;
-			CINDEX = 0;
-			Console.WriteLine ("Digging from {0} Index {2} into {1} Index {3}", parent.Type, Node.Type, OCINDEX, CINDEX);
-			return 1;
-		} else if (CINDEX + 1 < Node.Children.Count) {
-			CINDEX++;
-			Console.WriteLine ("Continue @ {0}, Index {1}", Node.Type, CINDEX);
-			return 0;
-		} else if (CINDEX + 1 >= Node.Children.Count) {
-			while (CINDEX + 1 >= Node.Children.Count) {
-				Console.WriteLine ("{0} >= {1}", (CINDEX + 1), Node.Children.Count);
-				if (Memory.Count > 0) {
-					Explored.Add (Node);
-					YSParseNode child = Node;
-					MEMPOP();
-					Console.WriteLine ("Exiting from {0} to {1}, Index {2}", child.Type, Node.Type, CINDEX);
-				} else {
-					CINDEX = -1;
-					return -2;
-				}
-			}
-			CINDEX++;
-			return -1;
-		}
-		return -2;
-	}
 
 	public YSInterpreter (YSParseNode ParseTree)
 	{
+		Console.WriteLine ("Begining Interpreter");
 		Node = ParseTree;
-		Memory = new Stack<NodeIndex> ();
-		Explored = new HashSet<YSParseNode> ();
-		STATE = new YSStateModule (false);
-		Program (Node);
+		//Memory = new Stack<NodeIndex> ();
+		STATE = new YSStateModule (this, false);
 	}
 
-	void ExpectType(NType Type)
+	public bool Interpret()
 	{
-		if (CType != Type) {
-			Error ("Attempting to resolve " + Type + " on " + CType);	
+		Console.WriteLine ("Beginning Program...");
+		return Program (Node);
+	}
+
+	bool AcceptType(IdentityType accept, IdentityType type)
+	{
+		if (accept == type) {
+			return true;
 		}
+		return false;
 	}
 
-	public void Program(YSParseNode ProgramNode)
+	bool ExpectType(IdentityType expect, IdentityType type)
 	{
-		try{
-			int SCNT = 0;
-			while (SCNT < ProgramNode.Children.Count) {
+		if (AcceptType (expect, type)) {
+			return true;
+		} else {
+			Error("Unexpected Type: " + type + " expecting " + expect);
+		}
+		return false;
+	}
+
+	void ExpectNonExistance(string name)
+	{
+		if (STATE.IdentityExists (name))
+			Error (String.Format ("Identity Name {0} alread exists", name));
+	}
+
+	bool Program(YSParseNode ProgramNode)
+	{
+		Current = ProgramNode;
+		Debug(String.Format("Program Node with {0} children", ProgramNode.Children.Count));
+
+		int SCNT = 0;
+		while (SCNT < ProgramNode.Children.Count) {
+			try{
 				Statement (ProgramNode.Children[SCNT++]);
+			}catch(InterpreterException){
+				Debug ("[Interpreter Exception] Exiting Program..");
+				return false;
+			}catch(StateException){
+				Debug ("[State Exception] Exiting Program..");
+				return false;
 			}
-			Debug ("Finished Interpretation");
-		}catch(Exception e){
-			Debug ("Exiting Program..");
 		}
+		Debug ("Finished Interpretation");
+		return true;
 	}
 
 	void Statement(YSParseNode StatementNode)
 	{
 		//Statements have only one child
+		Current = StatementNode;
 		YSParseNode StatementChild = StatementNode.Children [0];
 		switch (StatementChild.Type) {
 		case NType.VarCreate:
@@ -167,22 +122,10 @@ public class YSInterpreter
 			Debug ("Output Statement");
 			YSParseNode OutputNode = StatementNode.Children [0];
 			IDPacket OID = Expression (OutputNode.Children [0]);
-			if (OID.Type == IdentityType.Number) {
-				double d;
-				STATE.TryGetNumber (OID, out d);
-				Output ("" + d);
-			} else if (OID.Type == IdentityType.Text) {
-				string t;
-				STATE.TryGetText (OID, out t);
-				Output (t);
-			} else if (OID.Type == IdentityType.Boolean) {
-				bool b;
-				STATE.TryGetBoolean (OID, out b);
-				Output ("" + b);
-			}
+			STATE.OUTPUT (OID);
 			break;
 		default:
-			Error ("Unknown Node Type " + StatementChild.Type);
+			Error ("Unknown Statement Type " + StatementChild.Type);
 			break;
 		}
 		Debug ("Exit Statement");
@@ -191,6 +134,7 @@ public class YSInterpreter
 	void Block(YSParseNode BlockNode)
 	{
 		Debug ("Entering a block");
+		Current = BlockNode;
 		foreach (YSParseNode StatementNode in BlockNode.Children) {
 			if (StatementNode.Type == NType.Statement) {
 				Statement (StatementNode);
@@ -211,6 +155,7 @@ public class YSInterpreter
 	//type VarPrimitive(identity expression) { VarPrimitive(identity expression) }
 	void VarCreate(YSParseNode VarCreateNode)
 	{
+		Current = VarCreateNode;
 		YSToken DataTypeToken = VarCreateNode.Children[0].Token;
 		IdentityType IType = STATE.TranslateTokenTypeToIdentityType (DataTypeToken.Type);
 
@@ -223,11 +168,14 @@ public class YSInterpreter
 	//identity expression
 	void VarPrimitive(YSParseNode VarPrimitiveNode, IdentityType IType)
 	{
-		YSToken NameToken = VarPrimitiveNode.Children[0].Token;
+		Current = VarPrimitiveNode;
+		YSToken NameToken = VarPrimitiveNode.Children[0].Children[0].Token;
+		ExpectNonExistance (NameToken.Content);
 		IDPacket primitive = IDPacket.CreateIDPacket (STATE, NameToken.Content, IType);
 		Debug ("Creating variable " + NameToken.Content + " of type " + IType);
 		if (VarPrimitiveNode.Children.Count > 1) {
 			IDPacket PEXP = Expression (VarPrimitiveNode.Children [1]);
+			ExpectType (primitive.Type, PEXP.Type);
 			STATE.COPY (primitive, PEXP);
 			Debug ("Assignment complete");
 		} else {
@@ -248,11 +196,13 @@ public class YSInterpreter
 
 	void Loop(YSParseNode LoopNode)
 	{
+		Current = LoopNode;
 		YSParseNode ConditionNode = LoopNode.Children [1];
 		ScopeFrame LoopFrame = new ScopeFrame (STATE.current_scope, "Loop@" + LoopNode.Children [0].Token.Position, ScopeFrame.FrameTypes.Loop);
 		STATE.PushScope (LoopFrame);
 
 		IDPacket EVAL_COND = Expression (ConditionNode);
+		ExpectType (IdentityType.Boolean, EVAL_COND.Type);
 		bool EVAL_VAL;
 		STATE.TryGetBoolean (EVAL_COND, out EVAL_VAL);
 		while (EVAL_VAL) {
@@ -266,7 +216,9 @@ public class YSInterpreter
 
 	void Condition(YSParseNode ConditionNode)
 	{
+		Current = ConditionNode;
 		IDPacket EVAL_COND = Expression (ConditionNode.Children [0]);
+		ExpectType (IdentityType.Boolean, EVAL_COND.Type);
 		bool EVAL_VAL;
 		STATE.TryGetBoolean (EVAL_COND, out EVAL_VAL);
 		if (EVAL_VAL) {
@@ -278,7 +230,9 @@ public class YSInterpreter
 	void Structure(YSParseNode StructureNode)
 	{
 		Debug ("Initializing Structure..");
+		Current = StructureNode;
 		string StructureName = StructureNode.Children [0].Token.Content;
+		ExpectNonExistance (StructureName);
 		StructureFrame structure = new StructureFrame ();
 
 		int CINDEX = 0;
@@ -290,6 +244,7 @@ public class YSInterpreter
 			}
 			//TODO register as child of parent
 			IDPacket SID = IDPacket.CreateIDPacket (STATE, StructureName, IdentityType.Structure);
+
 			STATE.PutStructure (SID, structure);
 
 			STATE.PushScope (new ScopeFrame(structure, StructureName, ScopeFrame.FrameTypes.Structure));
@@ -309,7 +264,9 @@ public class YSInterpreter
 	void Function(YSParseNode FunctionNode)
 	{
 		Debug ("Beginning a function definition");
+		Current = FunctionNode;
 		string FunctionName = FunctionNode.Children [0].Token.Content;
+		ExpectNonExistance (FunctionName);
 		FunctionFrame FunctionFrame = new FunctionFrame ();
 		FunctionParamList (FunctionNode.Children [1], ref FunctionFrame);
 		FunctionFrame.Returns = STATE.TranslateTokenTypeToIdentityType (FunctionNode.Children [2].Token.Type);
@@ -324,6 +281,7 @@ public class YSInterpreter
 	void FunctionParamList(YSParseNode FunctionParamListNode, ref FunctionFrame Frame)
 	{
 		Debug ("Reading param list..");
+		Current = FunctionParamListNode;
 		if (FunctionParamListNode.Children.Count > 0) {
 			int FPC = 0;
 			while (FPC < FunctionParamListNode.Children.Count) {
@@ -350,6 +308,7 @@ public class YSInterpreter
 	IDPacket ExpressionLogic(YSParseNode ExpressionLogicNode)
 	{
 		Debug ("ExpressionLogic Resolving...");
+		Current = ExpressionLogicNode;
 		int CCNT = 0;
 		if (ExpressionLogicNode.Children [CCNT].Type == NType.Terminal) {
 			CCNT++;
@@ -359,9 +318,9 @@ public class YSInterpreter
 			LOG1 = STATE.LOGICAL_NOT (LOG1);
 		}
 		CCNT++;
-		if (CCNT < ExpressionLogicNode.Children.Count) {
+		while (CCNT < ExpressionLogicNode.Children.Count) {
 			YSToken LogicalOperator = ExpressionLogicNode.Children [CCNT++].Token;
-			IDPacket LOG2 = ExpressionLogic (ExpressionLogicNode.Children[CCNT++]);
+			IDPacket LOG2 = ExpressionBoolean (ExpressionLogicNode.Children[CCNT++]);
 			LOG1 = STATE.LOGICAL_OP (LOG1, LOG2, LogicalOperator);
 		}
 		Debug ("Exit ExpressionLogic, final type: " + LOG1.Type);
@@ -371,14 +330,14 @@ public class YSInterpreter
 	IDPacket ExpressionBoolean(YSParseNode ExpressionBooleanNode)
 	{
 		Debug ("ExpressionBoolean Resolving...");
+		Current = ExpressionBooleanNode;
 		int CCNT = 0;
 		IDPacket NUM1 = ExpressionNumber (ExpressionBooleanNode.Children [CCNT++]);
-		if (CCNT < ExpressionBooleanNode.Children.Count) {
+		while (CCNT < ExpressionBooleanNode.Children.Count) {
 			YSToken CompOperator = ExpressionBooleanNode.Children [CCNT++].Token;
-			IDPacket NUM2 = ExpressionBoolean (ExpressionBooleanNode.Children [CCNT++]);
+			IDPacket NUM2 = ExpressionNumber (ExpressionBooleanNode.Children [CCNT++]);
 			NUM1 = STATE.COMP_OP (NUM1, NUM2, CompOperator);
 		}
-
 		Debug ("Exit ExpressionBoolean, final type: " + NUM1.Type);
 		//TODO Operation
 		return NUM1;
@@ -387,6 +346,7 @@ public class YSInterpreter
 	IDPacket ExpressionNumber(YSParseNode ExpressionNumberNode)
 	{
 		Debug ("ExpressionNumber Resolving...");
+		Current = ExpressionNumberNode;
 		int CCNT = 0;
 		if (ExpressionNumberNode.Children [CCNT].Type == NType.Terminal) {
 			CCNT++;
@@ -401,7 +361,8 @@ public class YSInterpreter
 
 		while (CCNT < ExpressionNumberNode.Children.Count) {
 			YSToken NumOperator = ExpressionNumberNode.Children [CCNT++].Token;
-			IDPacket TERM2 = ExpressionNumber (ExpressionNumberNode.Children [CCNT++]);
+			IDPacket TERM2 = ExpressionTerm (ExpressionNumberNode.Children [CCNT++]);
+			//TODO Plus Operation
 			if (TERM1.Type == IdentityType.Text && TERM2.Type == IdentityType.Text && NumOperator.Type == YSToken.TokenType.Plus) {
 				TERM1 = STATE.STR_CONCAT (TERM1, TERM2);
 			} else {
@@ -415,11 +376,12 @@ public class YSInterpreter
 	IDPacket ExpressionTerm(YSParseNode ExpressionTermNode)
 	{
 		Debug ("ExpressionTerm Resolving...");
+		Current = ExpressionTermNode;
 		IDPacket FAC1 = ExpressionFactor (ExpressionTermNode.Children [0]);
 		int CCNT = 1;
 		while (CCNT < ExpressionTermNode.Children.Count) {
 			YSToken FacOperator = ExpressionTermNode.Children [CCNT++].Token;
-			IDPacket FAC2 = ExpressionTerm (ExpressionTermNode.Children [CCNT++]);
+			IDPacket FAC2 = ExpressionFactor (ExpressionTermNode.Children [CCNT++]);
 			FAC1 = STATE.MATH_OP (FAC1, FAC2, FacOperator);
 			//Debug ("Address " + FAC1.Name);
 		}
@@ -441,6 +403,7 @@ public class YSInterpreter
 	IDPacket ExpressionFactor(YSParseNode ExpressionFactorNode)
 	{
 		Debug ("ExpressionFactor Resolving...");
+		Current = ExpressionFactorNode;
 		switch (ExpressionFactorNode.Children [0].Type) {
 		case NType.Identity:
 		case NType.IdentityFunction:
@@ -466,7 +429,7 @@ public class YSInterpreter
 			return TEMP2;
 
 		default:
-			Error ("Could not resolve Identity");
+			Error ("Could not resolve Identity");	
 			return IDPacket.CreateSystemPacket("", IdentityType.Unknown);
 		}
 	}
@@ -474,6 +437,7 @@ public class YSInterpreter
 	IDPacket Identity(YSParseNode INode)
 	{
 		Debug ("Resolving basic identity");
+		Current = INode;
 		switch(INode.Type) {
 		case NType.Identity:
 			YSParseNode IdentityNode = INode;
@@ -498,12 +462,12 @@ public class YSInterpreter
 			Error ("Identity could not be resolved");
 			return IDPacket.CreateSystemPacket ("", IdentityType.Unknown);
 		}
-		Debug("Resolved Identity");
 	}
 
 	IDPacket IdentityStructure(YSParseNode IStructureNode)
 	{
 		Debug ("Resolving structure identity");
+		Current = IStructureNode;
 		string StructureName = IStructureNode.Children [0].Token.Content;
 		StructureFrame Frame;
 		Debug ("Attempting to find structure " + StructureName + " in " + STATE.current_scope.Name);
@@ -534,12 +498,12 @@ public class YSInterpreter
 			Error ("Attempting to resolve a structure chain that ends improperly");
 
 		return ReturnPacket;
-		Debug ("Finished Resolving");
 	}
 
 	IDPacket IdentityFunction(YSParseNode IFunctionNode)
 	{
 		Debug ("Attempting to execute function");
+		Current = IFunctionNode;
 		string FunctionName = IFunctionNode.Children [0].Token.Content;
 		IDPacket FunctionPacket = IDPacket.CreateIDPacket (STATE, FunctionName, IdentityType.Function);
 
@@ -554,6 +518,7 @@ public class YSInterpreter
 			IDPacket argexp = Expression (arg);
 			Bindings.Add (argexp);
 		}
+
 		ScopeFrame FunctionScope = STATE.CreateFunctionScope (FT, FunctionName, Bindings);
 		FunctionScope.Name = FunctionName;
 		FunctionScope.Type = ScopeFrame.FrameTypes.Function;
@@ -562,29 +527,11 @@ public class YSInterpreter
 		YSParseNode FunctionBlockNode = FT.Block;
 		Block (FunctionBlockNode);
 
-		STATE.PopScope ();
+		STATE.PopScopeNoSave ();
 		Debug ("Finished execution");
 		return IDPacket.CreateReturnPacket (FT.Returns);
 	}
-
-	bool Terminal(out YSToken token)
-	{
-		token = Current.Token;
-		return (CType == NType.Terminal);
-	}
-
-	public void Traverse()
-	{
-		int count = 0;
-		while (!EOF) {
-			PrintNodeData (Current);
-			count++;
-			Next ();
-		}
-		Console.WriteLine ("Proccessed {0} nodes.", count);
-		throw new Exception ("Debug");
-	}
-
+	/*
 	public void PrintNodeData(YSParseNode n)
 	{
 		if (n != null) {
@@ -598,25 +545,30 @@ public class YSInterpreter
 		} else
 			Console.WriteLine ("Current is null. {0}", n);
 	}
-
-	void Output(string s)
+*/
+	void Verbose(String s)
 	{
-		Console.WriteLine ("[Output] " + s);
+		//Console.WriteLine ("Debug " + DEBUG);
+		string name = Current.Token.Content;
+		int location = Current.Token.Position;
+		if(VERBOSE)
+			Console.WriteLine (String.Format("[Verbose near {0} @ {1}] {2} ", name, location, s));
 	}
 
 	void Debug(String s)
 	{
 		//Console.WriteLine ("Debug " + DEBUG);
-		string name = (Current.Token != null) ? Current.Token.Content : "" + Current.Type;
-		string location = (Current.Token != null) ? "" + Current.Token.Position : "Unknown";
+		string name = Current.Token.Content;
+		int location = Current.Token.Position;
 		if(DEBUG)
-			Console.WriteLine ("[Debug] " + s);
+			Console.WriteLine (String.Format("[Debug near {0} @ {1}] {2} ", name, location, s));
 	}
 
 	void Error(String s)
 	{
-		Console.WriteLine ("[Interpret Error near \" + name + \" @ \" + location + \"] " + s);
-
+		string name = Current.Token.Content;
+		int location = Current.Token.Position;
+		Console.WriteLine (String.Format("[Error near {0} @ {1}] {2} ", name, location, s));
 		throw new InterpreterException ("Interpreter Exception");
 	}
 

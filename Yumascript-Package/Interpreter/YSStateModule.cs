@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Reflection;
 using Token = YSToken;
 using Type = YSToken.TokenType;
 
@@ -7,8 +8,10 @@ using Type = YSToken.TokenType;
 
 public class YSStateModule	{
 	public static bool DEBUG = false;
+	public static bool VERBOSE = false;
 	/*public enum DataType { Boolean, Number, Text, List, GameObject, Structure, Unknown };*/
 	bool PARSE_MODE;
+	YSInterpreter Context;
 
 	public IdentityType TranslateTokenTypeToIdentityType(Type current)
 	{
@@ -75,62 +78,82 @@ public class YSStateModule	{
 		string[] _path = packet.Address.Split ('/');
 		List<string> pathList = new List<string>();
 		foreach (string tok in _path)
-			if (tok != "")
+			if (tok.Length > 0)
 				pathList.Add (tok);
 
 		string[] path = pathList.ToArray ();
 		scope = Global_Scope;
 		int SCNT = 0;
+		ScopeFrame[] _SS = Scope_Stack.ToArray ();
 		for (int i = 0; i < path.Length; i++) {
 			/*if (str.Length > 0 && !scope.Structures.TryGetValue (str, out scope) && !) {
 				throw new Exception ("IDPacket Address is corrupt: " + packet.Address);
 			}*/
 			string str = path [i];
-			if (str.Length > 0) {
-				StructureFrame schild;
-				FunctionFrame fchild;
-				if (scope.Structures.TryGetValue (str, out schild)) {
-					Debug ("[Struct] Child " + str + " found");
-					scope = StructureFrame.Appropriate(str, schild);
-					SCNT++;
-					continue;
-				} else if (scope.Functions.TryGetValue (str, out fchild)) {
-					Debug ("[Func] Child " + str + " found");
-					//scope = CreateFunctionScope (fchild);
-					//SCNT++;
-					if (i != path.Length - 1)
-						Error ("Functions donot have accessible variables");
-					break;
+			string[] addr_parts = str.Split (':');
+			string addr_type = addr_parts [0], addr_name = addr_parts [1];
+
+			if (!addr_type.Equals ("s")) {
+				Debug ("Searching scope stack...");
+				if (_SS [i].Name.Equals (addr_name)) {
+					Debug (String.Format ("Found {0} on top of {1}", addr_name, scope.Name));
+					scope = _SS [i];
 				} else {
-					if(i > 0)
-						Error ("Child " + str + " NOT found");
-					//See if the next scope in the stack matches
-					ScopeFrame[] _SS = Scope_Stack.ToArray ();
-					for(; i < _SS.Length; i++)
-					{
-						string _str = path[i];
-						ScopeFrame _SF = _SS [i];
-						if (_str == _SF.Name)
-							scope = _SF;
-						else
-							Error ("Scope " + _str + " not found inside " + scope.Name);
-					}
+					Debug (String.Format ("Didn't find {0} on top of {1}", addr_name, scope.Name));
 				}
+			} else {
+				Debug ("Searching structures...");
+				StructureFrame schild;
+				if (scope.Structures.TryGetValue (addr_name, out schild)) {
+					Debug ("[Structure] Child " + addr_name + " found");
+					scope = StructureFrame.Appropriate(addr_name, schild);
+				}			
 			}
+			/*StructureFrame schild;
+			FunctionFrame fchild;
+			if (scope.Structures.TryGetValue (str, out schild)) {
+				Debug ("[Struct] Child " + str + " found");
+				scope = StructureFrame.Appropriate(str, schild);
+				SCNT++;
+				continue;
+			} else if (scope.Functions.TryGetValue (str, out fchild)) {
+				Debug ("[Func] Child " + str + " found");
+				//scope = CreateFunctionScope (fchild);
+				//SCNT++;
+				if (i != path.Length - 1)
+					Error ("Functions donot have accessible variables");
+				break;
+			} else {
+				if(i > 0)
+					Error ("Child " + str + " NOT found");
+				//See if the next scope in the stack matches
+				ScopeFrame[] _SS = Scope_Stack.ToArray ();
+				for(; i < _SS.Length; i++)
+				{
+					string _str = path[i];
+					ScopeFrame _SF = _SS [i];
+					if (_str == _SF.Name)
+						scope = _SF;
+					else
+						Error ("Scope " + _str + " not found inside " + scope.Name);
+				}
+			}*/
 		}
 		Debug ("Exiting Finder");
 	}
 
 	public void PutNumber(IDPacket packet, double number)
 	{
-		Debug ("Putting number");
+		Debug (String.Format("Putting number into {0}{1}", packet.Address, packet.Name));
 		ScopeFrame scope;
 		FindNameScope (packet, out scope);
+		Debug (String.Format ("Found scope {0}, type {1}", scope.Name, scope.Type));
 		double trash;
 		if (TryGetNumber (packet, out trash))
 			scope.Primitives.Numbers [packet.Name] = number;
 		else
 			scope.Primitives.Numbers.Add (packet.Name, number);
+		Debug ("Put number");
 	}
 
 	public bool TryGetNumber(IDPacket packet, out double value)
@@ -308,6 +331,7 @@ public class YSStateModule	{
 		} else {
 			Error ("Unknown Idenitity Type");
 		}
+		Debug ("Finished copy");
 	}
 
 	public class StructureFrame
@@ -437,7 +461,7 @@ public class YSStateModule	{
 		public string Name;
 		public FrameTypes Type;
 
-		public enum FrameTypes { None, Structure, Function, Loop }
+		public enum FrameTypes { None, Structure, Function, Loop, Check }
 
 
 		public ScopeFrame() : base()
@@ -571,7 +595,7 @@ public class YSStateModule	{
 
 	public ScopeFrame CreateParseFunctionScope(FunctionFrame ftype, string FunctionName)
 	{
-		ScopeFrame fscope = new ScopeFrame (current_scope);
+		ScopeFrame fscope = new ScopeFrame (current_scope, FunctionName, ScopeFrame.FrameTypes.Function);
 
 		fscope.Name = FunctionName;
 		fscope.Type = ScopeFrame.FrameTypes.Function;
@@ -608,6 +632,7 @@ public class YSStateModule	{
 				Error ("Binding Error: Parameter type mismatch, expected: " + fp.Type + " got " + Binding.Type);
 
 			COPY (Address, Binding);
+			Debug ("After copy");
 		}
 		return PopScopeNoSave ();
 	}
@@ -747,6 +772,14 @@ public class YSStateModule	{
 			ScopeFrame[] scope_stack = state.Scope_Stack.ToArray ();
 			string path = "/";
 			for (int i = scope_stack.Length - 1; i >= 0; i--) {
+				if (scope_stack [i].Type == ScopeFrame.FrameTypes.Structure)
+					path += "s:";
+				else if (scope_stack [i].Type == ScopeFrame.FrameTypes.Function)
+					path += "f:";
+				else if (scope_stack [i].Type == ScopeFrame.FrameTypes.Loop)
+					path += "l:";
+				else
+					path += "u:";
 				path += scope_stack [i].Name + "/";
 			}
 			state.Debug ("Created IDPacket with path: " + path.Trim() + " name: " + name);
@@ -772,6 +805,28 @@ public class YSStateModule	{
 	}
 
 	//methods for actual operations
+
+	public void OUTPUT(IDPacket OP1)
+	{
+		if (OP1.Type == IdentityType.Number) {
+			double d;
+			TryGetNumber (OP1, out d);
+			Output ("" + d);
+		} else if (OP1.Type == IdentityType.Text) {
+			string t;
+			TryGetText (OP1, out t);
+			Output (t);
+		} else if (OP1.Type == IdentityType.Boolean) {
+			bool b;
+			TryGetBoolean (OP1, out b);
+			Output ("" + b);
+		} else {
+			Output (String.Format("Data Packet Name {0} @ {1}, Type {2}", OP1.Name, OP1.Address, OP1.Type));
+		}
+	}
+
+	//Logical Operations
+
 	public IDPacket LOGICAL_OP(IDPacket OP1, IDPacket OP2, Token Operator)
 	{
 		if (Operator.Type == Type.And) {
@@ -841,7 +896,7 @@ public class YSStateModule	{
 		TryGetNumber (OP1, out op1);
 		TryGetNumber (OP2, out op2);
 		Debug ("Operation >, op1: " + op1 + ", " + op2);
-		IDPacket RES = IDPacket.CreateSystemPacket (">OP", IdentityType.Number);
+		IDPacket RES = IDPacket.CreateSystemPacket (">OP", IdentityType.Boolean);
 		PutBoolean (RES, op1 > op2);
 		return RES;
 	}
@@ -852,7 +907,7 @@ public class YSStateModule	{
 		TryGetNumber (OP1, out op1);
 		TryGetNumber (OP2, out op2);
 		Debug ("Operation <, op1: " + op1 + ", " + op2);
-		IDPacket RES = IDPacket.CreateSystemPacket ("<OP", IdentityType.Number);
+		IDPacket RES = IDPacket.CreateSystemPacket ("<OP", IdentityType.Boolean);
 		PutBoolean (RES, op1 < op2);
 		return RES;
 	}
@@ -866,21 +921,21 @@ public class YSStateModule	{
 			TryGetNumber (OP1, out op1);
 			TryGetNumber (OP2, out op2);
 			Debug ("Operation(Number) ==, op1: " + op1 + ", " + op2);
-			RES = IDPacket.CreateSystemPacket ("==OP", IdentityType.Number);
+			RES = IDPacket.CreateSystemPacket ("==OP", IdentityType.Boolean);
 			VAL = op1 == op2;
 		} else if (OP1.Type == IdentityType.Boolean) {
 			double op1, op2;
 			TryGetNumber (OP1, out op1);
 			TryGetNumber (OP2, out op2);
 			Debug ("Operation(Boolean) ==, op1: " + op1 + ", " + op2);
-			RES = IDPacket.CreateSystemPacket ("==OP", IdentityType.Number);
+			RES = IDPacket.CreateSystemPacket ("==OP", IdentityType.Boolean);
 			VAL = op1 == op2;
 		} else if (OP1.Type == IdentityType.Text) {
 			string op1, op2;
 			TryGetText (OP1, out op1);
 			TryGetText (OP2, out op2);
 			Debug ("Operation(Text) ==, op1: " + op1 + ", " + op2);
-			RES = IDPacket.CreateSystemPacket ("==OP", IdentityType.Number);
+			RES = IDPacket.CreateSystemPacket ("==OP", IdentityType.Boolean);
 			VAL = op1 == op2;
 		} else {
 			Error ("Comparing incompatible types");
@@ -976,16 +1031,87 @@ public class YSStateModule	{
 		return RES;
 	}
 
-	public YSStateModule (bool parse_mode)
+	//(text haystack, number at)
+	public IDPacket EXTERNAL(string MethodName, IDPacket[] PARAMS)
 	{
-		Debug ("Creating scope...");
+		IDPacket ret = null;
+		MethodInfo minfo = this.GetType ().GetMethod (MethodName);
+		try {
+			int PCNT = 0;
+			List<object> parameters = new List<object>();
+			foreach(ParameterInfo pinfo in minfo.GetParameters()) {
+				IDPacket PARAM = PARAMS[PCNT++];
+				System.Type ptype = pinfo.ParameterType;
+				if(ptype == typeof(int) || ptype == typeof(double) || ptype == typeof(short) || ptype == typeof(long))
+				{
+					if(PARAM.Type == IdentityType.Number) {
+						double d;
+						TryGetNumber(PARAM, out d);
+						parameters.Add(d);
+					} else {
+						Error(String.Format("Type mismatch in external function call, expecting {0} in parameter {1} got {2}", 
+							ptype, PCNT, PARAM.Type));
+					}
+				} else if(ptype == typeof(string)) {
+					if(PARAM.Type == IdentityType.Number) {
+						string s;
+						TryGetText(PARAM, out s);
+						parameters.Add(s);
+					} else {
+						Error(String.Format("Type mismatch in external function call, expecting {0} in parameter {1} got {2}",
+							ptype, PCNT, PARAM.Type));
+					}
+				} else if(ptype == typeof(bool)) {
+					if(PARAM.Type == IdentityType.Boolean) {
+						bool b;
+						TryGetBoolean(PARAM, out b);
+						parameters.Add(b);
+					} else {
+						Error(String.Format("Type mismatch in external function call, expecting {0} in parameter {1} got {2}", 
+							ptype, PCNT, PARAM.Type));
+					}
+				} else {
+					Error(String.Format("The external function {0} cannot be called from the YSInterpreter", minfo.Name));
+				}
+			}
+			object returnValue = minfo.Invoke(minfo, parameters.ToArray());
+			System.Type rtype = minfo.ReturnType;
+			if(rtype == typeof(int) || rtype == typeof(double) || rtype == typeof(short) || rtype == typeof(long))
+			{
+				ret = IDPacket.CreateReturnPacket(IdentityType.Number);
+				PutNumber(ret, (double) returnValue);
+			} else if(rtype == typeof(string)) {
+				ret = IDPacket.CreateReturnPacket(IdentityType.Text);
+				PutText(ret, (string) returnValue);
+			} else if(rtype == typeof(bool)) {
+				ret = IDPacket.CreateReturnPacket(IdentityType.Boolean);
+				PutBoolean(ret, (bool) returnValue);
+			} else {
+				Debug(String.Format("[!] The external function {0}'s returning value of type {1} cannot be used by YSInterpreter", 
+					minfo.Name, minfo.ReturnType));
+			}
+		} catch(TargetInvocationException) {
+			Error ("Failed to invoke the external method");
+			return null;
+		} catch(Exception) {
+			Error ("Failed to invoke the external method");
+			return null;
+		}
+		return ret;
+	}
+
+	public YSStateModule (YSInterpreter context, bool parse_mode)
+	{
+		Context = context;
+		Console.WriteLine ("Creating scope...");
 		PARSE_MODE = parse_mode;
 		Global_Scope = new ScopeFrame ("", ScopeFrame.FrameTypes.None);
 		Scope_Stack = new Stack<ScopeFrame> ();
 
 		TemporaryStorage = new ScopeFrame();
+		Console.WriteLine ("Finished Scope Creation...");
 	}
-
+	/*
 	public void Error(string s)
 	{
 		Console.WriteLine("[State System Error] " + s);
@@ -996,6 +1122,69 @@ public class YSStateModule	{
 	{
 		if(DEBUG)
 			Console.WriteLine("[Debug] " + s);
+	}*/
+	/*
+	void Verbose(String s)
+	{
+		//Console.WriteLine ("Debug " + DEBUG);
+		string name = (Context.Current.Token != null) ? Context.Current.Token.Content : "" + Context.Current.Type;
+		string location = (Context.Current.Token != null) ? "" + Context.Current.Token.Position : "Unknown";
+		if(VERBOSE)
+			Console.WriteLine (String.Format("[Verbose near {0} @ {1}] {2} ", name, location, s));
+	}
+
+	void Debug(String s)
+	{
+		//Console.WriteLine ("Debug " + DEBUG);
+		string name = (Context.Current.Token != null) ? Context.Current.Token.Content : "Unknown";
+		string location = (Context.Current.Token != null) ? "" + Context.Current.Token.Position : "Unknown";
+		if(DEBUG)
+			Console.WriteLine (String.Format("[Debug near {0} @ {1}] {2} ", name, location, s));
+	}
+
+	void Error(String s)
+	{
+		string name = (Context.Current.Token != null) ? Context.Current.Token.Content : "" + Context.Current.Type;
+		string location = (Context.Current.Token != null) ? "" + Context.Current.Token.Position : "Unknown";
+		Console.WriteLine (String.Format("[Error near {0} @ {1}] {2} ", name, location, s));
+		throw new Exception ("State Exception");
+	}*/
+
+	void Verbose(String s)
+	{
+		//Console.WriteLine ("Debug " + DEBUG);
+		string name = Context.Current.Token.Content;
+		int location = Context.Current.Token.Position;
+		if(VERBOSE)
+			Console.WriteLine (String.Format("[Verbose near {0} @ {1}] {2} ", name, location, s));
+	}
+
+	void Debug(String s)
+	{
+		//Console.WriteLine ("Debug " + DEBUG);
+		string name = Context.Current.Token.Content;
+		int location = Context.Current.Token.Position;
+		if(DEBUG)
+			Console.WriteLine (String.Format("[Debug near {0} @ {1}] {2} ", name, location, s));
+	}
+
+	void Error(String s)
+	{
+		string name = Context.Current.Token.Content;
+		int location = Context.Current.Token.Position;
+		Console.WriteLine (String.Format("[Error near {0} @ {1}] {2} ", name, location, s));
+		throw new StateException ("State Exception");
+	}
+
+	public class StateException : Exception
+	{
+		public StateException(string msg) : base(msg) {
+		}
+	}
+
+	void Output(string s)
+	{
+		Console.WriteLine ("[Output] " + s);
 	}
 }
 
