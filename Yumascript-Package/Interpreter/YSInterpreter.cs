@@ -240,7 +240,7 @@ public class YSInterpreter
 		ExpressionTerm (ExpressionNumberNode.Children [0], ref id);
 		int CCNT = 1;
 		while (CCNT < ExpressionNumberNode.Children.Count) {
-			YSToken CompOperator = ExpressionNumberNode.Children [CCNT++];
+			YSToken NumOperator = ExpressionNumberNode.Children [CCNT++];
 			ExpressionTerm (ExpressionNumberNode.Children [CCNT++]);
 		}
 
@@ -252,7 +252,7 @@ public class YSInterpreter
 		ExpressionFactor (ExpressionTermNode.Children [0], ref id);
 		int CCNT = 1;
 		while (CCNT < ExpressionTermNode.Children.Count) {
-			YSToken CompOperator = ExpressionTermNode.Children [CCNT++];
+			YSToken TermOperator = ExpressionTermNode.Children [CCNT++];
 			ExpressionFactor (ExpressionTermNode.Children [CCNT++]);
 		}
 
