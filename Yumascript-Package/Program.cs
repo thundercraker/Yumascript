@@ -1,31 +1,34 @@
 ﻿using System;
-using System.Linq;
+using System.IO;
 
-	class MainClass
+class MainClass
+{
+	public static void Main (string[] args)
 	{
-		public static void Main (string[] args)
+		String raw = "";
+
+		try
+		{   
+			using (StreamReader sr = new StreamReader("YSCode.ys"))
+			{
+				raw = sr.ReadToEnd();
+			}
+			YSLexer.DEBUG 		= false;
+			YSRDParser.DEBUG	= true;
+			YSInterpreter.DEBUG = true;
+			YSStateModule.DEBUG	= true;
+
+			YSRDParser parser = new YSRDParser (raw);
+			if(parser.Parse() <= YSInterpreter.ERR_ACCEPT){
+				YSInterpreter interpreter = new YSInterpreter (parser.PopLast());
+				interpreter.Interpret();
+			} else
+				Console.WriteLine("Interpreter not started, parsing was aborted");
+		}
+		catch (IOException e)
 		{
-			//YSLexer YSL = new YSLexer ();
-			//var Tokenizer = new YSTokenizer(() => "\"number\" n = 1 + 3;".ToCharArray().Select(i => i.ToString()).ToList());
-
-			/*var lexer = new YSLexer ("\"number\" n = 1 + 3;");
-
-			Console.WriteLine ("Token Indices: ");
-			//Tokenizer.Merge (0, 6);
-			lexer.Tokenizer.PrintCharacters ();
-			lexer.Tokenizer.PrintTokenIndices();*/
-		String raw = "number n = 1; n = n * n; function n (number n) : number { return n * n; }";
-
-		raw = "structure t { number one; text two; } " +
-			"function square(number n) : number { return n*n; } " +
-			"square(10); " +
-			"number n = 5; " +
-			"number x = square(n); " +
-			"t.one = x; " +
-			"t.two = \"Eyy\";";
-
-		YSRDParser parser = new YSRDParser (raw);
-		YSInterpreter interpreter = new YSInterpreter (parser.PopLast());
-		interpreter.Program ();
+			Console.WriteLine("The file could not be read:");
+			Console.WriteLine(e.Message);
 		}
 	}
+}

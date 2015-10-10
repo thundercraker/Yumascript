@@ -1,33 +1,34 @@
 ﻿using System;
 using System.Collections.Generic;
 
-	public class YSParseNode
+public class YSParseNode
+{
+	public enum NodeType { Program, Statement, Set, Call, Output, Global, Parent, VarCreate, VarPrimitive, Condition, Loop, Function, FunctionParamList, FunctionArgList, FunctionReturn, FunctionBody, Structure, Block, Expression, ExpressionList,
+		ExpressionLogic, ExpressionBoolean, ExpressionNumber, ExpressionTerm, ExpressionFactor, Number, Text, Identity, IdentityArray, IdentityFunction,
+		IdentityStructure, Terminal, TypeName };
+
+	public readonly NodeType Type;
+	public List<YSParseNode> Children;
+	public readonly YSToken Token;
+
+	public YSParseNode ()
 	{
-		public enum NodeType { Program, Statement, VarCreate, VarPrimitive, Condition, Loop, Function, FunctionParamList, FunctionReturn, FunctionBody, Structure, Block, Expression, ExpressionList,
-			ExpressionLogic, ExpressionBoolean, ExpressionNumber, ExpressionTerm, ExpressionFactor, Number, Text, Identity, IdentityArray, IdentityFunction,
-			IdentityStructure, Terminal, TypeName };
-
-		public readonly NodeType Type;
-		public List<YSParseNode> Children;
-		public readonly YSToken Token;
-
-		public YSParseNode ()
-		{
-			Type = NodeType.Program;
-			Children = new List<YSParseNode> ();
-		}
-
-		public YSParseNode(NodeType Type)
-		{
-			this.Type = Type;
-			Children = new List<YSParseNode> ();
-		}
-
-		public YSParseNode(YSToken Token)
-		{
-			this.Token = Token;
-			this.Type = NodeType.Terminal;
-			Children = new List<YSParseNode> ();
-		}
-
+		Type = NodeType.Program;
+		Children = new List<YSParseNode> ();
 	}
+
+	public YSParseNode(NodeType Type, YSToken Token)
+	{
+		this.Type = Type;
+		this.Token = Token;
+		Children = new List<YSParseNode> ();
+	}
+
+	public YSParseNode(YSToken Token)
+	{
+		this.Token = Token;
+		this.Type = NodeType.Terminal;
+		Children = new List<YSParseNode> ();
+	}
+
+}

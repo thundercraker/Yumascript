@@ -4,19 +4,22 @@ using Token 		= YSToken;
 using Type 			= YSToken.TokenType;
 //using DataType = YSInterpretModule.DataType;
 using IdentityType 	= YSStateModule.IdentityType;
-using StructureType = YSStateModule.StructureType;
-using FunctionType 	= YSStateModule.FunctionType;
+using StructureFrame = YSStateModule.StructureFrame;
+using FunctionFrame 	= YSStateModule.FunctionFrame;
 using FunctionParamater = YSStateModule.FunctionParameter;
+using ScopeFrame = YSStateModule.ScopeFrame;
 using Primitives 	= YSStateModule.Primitives;
 using IDPacket = YSStateModule.IDPacket;
 using ParseNodeType = YSParseNode.NodeType;
 
 public class YSRDParser
 {
-	YSStateModule STATE;
+	public static bool DEBUG = false;
+	public static bool VERBOSE = false;
 	readonly List<Token> program_tokens;
 	Stack<YSParseNode> parse_nodes;
 	int PC = 0;
+	int ERR_COUNT = 0;
 
 	Token previous
 	{
@@ -28,7 +31,10 @@ public class YSRDParser
 	Token current
 	{
 		get {
- 			return program_tokens[PC];
+			if (PC < program_tokens.Count)
+				return program_tokens [PC];
+			else
+				return new Token (-1, YSToken.TokenType.EOF, "EOF");
 		}
 	}
 
@@ -68,13 +74,14 @@ public class YSRDParser
 			c++;
 		}
 		Debug ("Popped " + c + " nodes");
+		Debug ("Last node type " + node.Type);
 		return node;
 	}
  
 	void PushParseNode(ParseNodeType Type)
 	{
 		Debug ("Pushing " + Type + " Stack height " + parse_nodes.Count); 
-		YSParseNode n = new YSParseNode (Type);
+		YSParseNode n = new YSParseNode (Type, current);
 		parse_nodes.Push (n);
 	}
 
@@ -101,15 +108,16 @@ public class YSRDParser
 
 	public YSRDParser (string raw)
 	{
-		Debug ("Creating interpreter...");
-		STATE = new YSStateModule ();
-		Debug ("Begin parser....");
 		var Lexer = new YSLexer (raw);
 		program_tokens = Lexer.GetTokenList ();
 		PC = 0;
+		ERR_COUNT = 0;
 		parse_nodes = new Stack<YSParseNode> ();
-		Debug ("Beginning parsing from Program");
-		Program ();
+	}
+
+	public int Parse()
+	{
+		return Program ();
 	}
 
 	bool EOF
@@ -122,7 +130,7 @@ public class YSRDParser
 	bool Accept(Type t)
 	{
 		if (current.Is (t)) {
-			Console.WriteLine ("Accepted " + t + " Content: " + current.Content);
+			Debug ("Accepted " + t + " Content: " + current.Content);
 			PC++;
 			Debug (PC + "");
 			return true;
@@ -167,27 +175,9 @@ public class YSRDParser
 		return false;
 	}*/
 
-	bool AcceptType(IdentityType accept, IdentityType type)
-	{
-		if (accept == type) {
-			return true;
-		}
-		return false;
-	}
-
-	bool ExpectType(IdentityType expect, IdentityType type)
-	{
-		if (AcceptType (expect, type)) {
-			return true;
-		} else {
-			Error("Unexpected Type: " + type + " expecting " + expect);
-		}
-		return false;
-	}
-
 	bool DataType(bool Expect_Sub)
 	{
-		Console.WriteLine ("Checking if " + current.Type + " is a datatype"); 
+		Debug ("Checking if " + current.Type + " is a datatype"); 
 		Type t = current.Type;
 		if (DataTypeSimple()) {
 			PC++;
@@ -210,23 +200,38 @@ public class YSRDParser
 	{
 		Type t = current.Type;
 		if (t == Type.Number || t == Type.Boolean || t == Type.Text || t == Type.Structure) {
-			Console.WriteLine ("Is datatype");
+			Debug ("Is datatype");
 			return true;
 		} else {
 			return false;
 		}
 	}
 
+	void Verbose(String s)
+	{
+		string name = current.Content;
+		string location = "" + current.Position;
+		if(VERBOSE)
+			Console.WriteLine (String.Format("[Verbose near {0} @ {1}] {2} ", name, location, s));
+	}
+
 	void Debug(String s)
 	{
-		Console.WriteLine (s);
+		string name = current.Content;
+		string location = "" + current.Position;
+		if(DEBUG)
+			Console.WriteLine (String.Format("[Debug near {0} @ {1}] {2} ", name, location, s));
 	}
 
 	void Error(String s)
 	{
-		Console.WriteLine (s);
-		throw new ParseException ("Parser Exception");
+		string name = current.Content;
+		string location = "" + current.Position;
+		Console.WriteLine (String.Format("[Error near {0} @ {1}] {2} ", name, location, s));
+		throw new ParseException ("Parse Exception");
 	}
+
+
 
 	//TODO
 	//1) Expression List Parsing
@@ -235,14 +240,15 @@ public class YSRDParser
 	 * 
 	 * 
 	 * 
-	 * statement 	:= identity "=" expression ;
+	 * statement 	:= set identity "=" expression ;
 	 * 				| var-create ;
 	 *				| condition
 	 *				| loop
+	 *				| call identity
 	 *				| function
-	 *				| structure
+	 *				| output expression
 	 *
-	 *	var-create	:= primitive-type identity [ "=" expression ] { identity [ "=" expression ] }
+	 *	var-create	:= primitive-type identity [ "=" expression ] { , identity [ "=" expression ] }
 	 *				| array of type identity "=" array "(" array-exp ")" ;
 	 *
 	 *	condition	:= "if" expression "then" block
@@ -264,9 +270,9 @@ public class YSRDParser
 	 *	
 	 *	expr-list 	:= "[" [ expression { , expression } ] "]"
 	 *
-	 *  expr-logic	:= expr-bool { (and|or) expr-bool }
+	 *  expr-logic	:= [not] expr-bool { (and|or) [not] expr-bool }
 	 *
-	 *	expr-bool	:= [not] expr-num { compopr [not] expr-num }
+	 *	expr-bool	:= expr-num { compopr expr-num }
 	 *
 	 *	expr-num	:= [addoppr] expr-term { addoppr expr-term }
 	 *
@@ -277,7 +283,7 @@ public class YSRDParser
      * 				| textdata
      * 				| "(" expression ")"
      * 
-     * 	ident		:= identity | ident-arr | ident-str | ident-fun
+     * 	ident		:= [(global|parent{.parent}).]identity | ident-arr | ident-str | ident-fun
      * 
      * 	ident-arr	:= ident : structure { "[" expression "]" }
      * 	
@@ -294,66 +300,95 @@ public class YSRDParser
 	 *	primitive-type 		:= Number | Text | List | GameObject | Boolean #| "<" identity ">" allow users to create objects/their own datatypes
 	 */
 
-	void Program()
+	int Program()
 	{
-		YSParseNode n = new YSParseNode (ParseNodeType.Program);
+		YSParseNode n = new YSParseNode (ParseNodeType.Program, program_tokens[0]);
 		parse_nodes.Push (n);
 
-		Debug ("Program");
-		try {
-			Console.WriteLine ("Beginning parsing of " + program_tokens.Count + " tokens");
-			while (!EOF) {
+		bool FATAL = false;
+
+		Debug ("Beginning parsing of " + program_tokens.Count + " tokens");
+		while (!EOF) {
+			try {
 				Statement ();
+			} catch(ParseException) {
+				Panic ();
+				ERR_COUNT++;
 			}
-			Console.WriteLine ("End of parsing");
-		} catch(ParseException) {
-			Console.WriteLine ("Parsing aborted");
+		}
+		Debug ("End of parsing");
+		return ERR_COUNT;
+	}
+
+	void Panic()
+	{
+		//Panic Mode
+		//skip tokens until a synchronizing token is found
+		//sync token ";"
+		//discard the current parsenode
+		PopParseNode ();
+		while (!EOF && !Accept (Type.Semicolon)) {
+			Debug(String.Format("[Panic Mode] Discarding token {0} [Type: {1}]", current.Content, current.Type));
+			PC++;
 		}
 	}
+
 
 	void Statement()
 	{
 		PushParseNode (ParseNodeType.Statement);
-
-		IdentityType type = new IdentityType();
-		IdentityType id_type = new IdentityType ();
-		if (Identity(false, ref type, ref id_type)) {
-			Debug ("Identity returned " + type);
-
-			if (id_type != IdentityType.Function) {
-				Expect (Type.Assign);
-				CreateTerminalChild (previous);
-				IdentityType X1 = IdentityType.Unknown;
-				Expression (ref X1);
-				if (X1 != type)
-					Error ("Cannot assign type " + X1 + " to variable that is of type " + type);
-				Expect (Type.Semicolon);
-			} else {
-				Expect (Type.Semicolon);
-			}
+		bool ret = false;
+		if (Accept (Type.Set)) {
+			PushParseNode (ParseNodeType.Set);
+			Identity (true, true);
+			Expect (Type.Assign);
+			Expression ();
+			Expect (Type.Semicolon);
+			PopAndInsertParseNode ();
+		} else if (Accept (Type.Call)) {
+			PushParseNode (ParseNodeType.Call);
+			Expect (Type.Identity);
+			PopAndInsertParseNode ();
+			Expect (Type.Semicolon);
+		} else if (Accept(Type.Output)) {
+			//Print statement
+			PushParseNode (ParseNodeType.Output);
+			Expression ();
+			PopAndInsertParseNode ();
+			Expect (Type.Semicolon);
 		} else if (VarCreate (false)) {
 			Expect (Type.Semicolon);
 		} else if (Condition (false)) {
 		} else if (Structure (false)) {
 		} else if (Function (false)) {
 		} else if (Loop (false)) {
+		} else if (Accept (Type.Return)) {
+			PopParseNode ();
+			PushParseNode (ParseNodeType.FunctionReturn);
+			Expression ();
+			Expect (Type.Semicolon);
+			PopAndInsertParseNode ();
+			ret = true;
 		} else {
 			Error ("Unrecognized statement");
 		}
-
-		PopAndInsertParseNode ();
+		if(!ret)
+			PopAndInsertParseNode ();
 	}
 
 	bool VarCreate(bool Expect_Sub)
 	{
 		Debug ("Creation...(" + current.Content + " type " + current.Type + ")");
-		PushParseNode (ParseNodeType.VarCreate);
 
-		IdentityType itype = STATE.TranslateTokenTypeToIdentityType (current.Type);
+		//IdentityType itype = STATE.TranslateTokenTypeToIdentityType (current.Type);
 
-		if (itype != IdentityType.Function && itype != IdentityType.Structure && itype != IdentityType.Unknown) {
-			CreateTerminalChild (current);
-			PC++;
+		//if (itype != IdentityType.Function && itype != IdentityType.Structure && itype != IdentityType.Unknown) {
+		if(Accept(Type.Boolean) || Accept(Type.Number) || Accept(Type.Text)) {
+			IdentityType itype = 	(previous.Type == Type.Boolean) ? IdentityType.Boolean :
+									((previous.Type == Type.Number) ? IdentityType.Number : 
+									((previous.Type == Type.Text) ? IdentityType.Text : IdentityType.Unknown));
+			PushParseNode (ParseNodeType.VarCreate);
+			CreateTerminalChild (previous);
 			VarCreatePrimitiveHelper (itype);
 			while (Accept (Type.Comma)) {
 				VarCreatePrimitiveHelper (itype);
@@ -362,30 +397,22 @@ public class YSRDParser
 			PopAndInsertParseNode ();
 			return true;
 		} else if (Accept (Type.Array)) {
+			PushParseNode (ParseNodeType.VarCreate);
 			Expect (Type.Of);
 
-			IdentityType array_type = STATE.ResolveIdentityType (current);
-			if (array_type == IdentityType.Unknown)
-				Error ("Expecting a valid data type");
-			PC++;
+			if (!(Accept (Type.Number) || Accept (Type.Text) || Accept (Type.Boolean))) {
+				Error ("Cannot create an array of non primitive types");
+			}
 
 			Expect (Type.Identity);
-			if (STATE.IdentityExists (previous.Content))
-				Error ("Variable named " + previous.Content + " already exists in this scope");
 			string arrayName = previous.Content;
 			Expect (Type.Assign);
 			if (Accept (Type.Array)) {
 				Expect (Type.LParen);
-				IdentityType XL1 = IdentityType.Unknown;
-				ExpressionList (ref XL1);
+				ExpressionList ();
 				Expect (Type.RParen);
 			} else {
-				IdentityType X1 = IdentityType.Unknown;
-				Expression (ref X1);
-
-				if (X1 != array_type) {
-					Error ("Expression type does not match array type");
-				}
+				Expression ();
 			}
 
 			PopAndInsertParseNode ();
@@ -393,7 +420,6 @@ public class YSRDParser
 		} else {
 			if (Expect_Sub)
 				Error ("Expecting a Data member creation");
-			PopParseNode ();
 			return false;
 		}
 	}
@@ -403,25 +429,12 @@ public class YSRDParser
 		Debug ("Primitive Creation...(" + current.Content + " type " + current.Type + ")");
 		PushParseNode (ParseNodeType.VarPrimitive);
 
-		Expect (Type.Identity);
-		CreateTerminalChild (previous);
-
-		string variableName = previous.Content;
-		if (STATE.IdentityExists (variableName))
-			Error ("Variable named " + variableName + " already exists in this scope");
+		Identity (true, true);
+		//string variableName = previous.Content;
 		if (Accept (Type.Assign)) {
-			IdentityType X1 = IdentityType.Unknown;
-			Expression (ref X1);
-			if (X1 != type)
-				Error ("Cannot assign value of type " + X1 + " to variable " + variableName + " which expects " + type);
-			else {
-				Debug ("Creating a primitive variable with assignment");
-				STATE.CreateParserPrimitiveIdentity (variableName, type);
-			}
-
+			Expression ();
 		} else {
-			Debug ("Creating a primitive variable without assignment");
-			STATE.CreateParserPrimitiveIdentity(variableName, type);
+			Verbose ("Creating a primitive variable without assignment");
 		}
 		PopAndInsertParseNode ();
 		/*
@@ -434,13 +447,13 @@ public class YSRDParser
 	{
 		Debug ("Condition...(" + current.Content + " type " + current.Type + ")");
 
-		IdentityType X1 = IdentityType.Unknown;
 		if (Accept (Type.If)) {
 			PushParseNode (ParseNodeType.Condition);
-
-			Expression (ref X1);
+			Expect (Type.LParen);
+			Expression ();
+			Expect (Type.RParen);
 			Expect (Type.Then);
-			Block ();
+			Block (true);
 
 			PopAndInsertParseNode ();
 			return true;
@@ -455,13 +468,25 @@ public class YSRDParser
 	{
 		Debug ("Loop...(" + current.Content + " type " + current.Type + ")");
 
-		IdentityType X1 = IdentityType.Unknown;
 		if (Accept (Type.While)) {
+			/*
+			 * 
+		} else if(Accept(Type.While)){
 			PushParseNode (ParseNodeType.Loop);
-
-			Expression (ref X1);
+			CreateTerminalChild (previous);
+			Expression (ref type);
+			ExpectType (IdentityType.Boolean, type);
 			Expect (Type.Do);
 			Block ();
+			PopAndInsertParseNode();
+			 */
+			PushParseNode (ParseNodeType.Loop);
+			CreateTerminalChild (previous);
+			Expect (Type.LParen);
+			Expression ();
+			Expect (Type.RParen);
+			Expect (Type.Do);
+			Block (true);
 
 			PopAndInsertParseNode ();
 			return true;
@@ -478,33 +503,15 @@ public class YSRDParser
 
 		if (Accept (Type.Structure)) {
 			PushParseNode (ParseNodeType.Structure);
-
-			StructureType stype = STATE.PrepareEmptyStructure ();
-			StructureType parent = new StructureType();
-
 			Expect (Type.Identity);
-			string structureName = previous.Content;
 			CreateTerminalChild (previous);
 
-			if (STATE.IdentityExists (structureName))
-				Error ("Variable named " + structureName + " already exists in this scope");
-
-			bool isChild = false;
-			string parentName = "";
 			if (Accept (Type.Child)) {
 				CreateTerminalChild (previous);
 				Expect (Type.Of);
 				Expect (Type.Identity);
-				parentName = previous.Content;
 				CreateTerminalChild (previous);
-				if (STATE.TryGetParseStructure(previous.Content, out parent)) {
-					Debug ("Added as a parent of " + parentName);
-					isChild = true;
-				} else {
-					Error ("A structure can only be a child of another structure");
-				}
 			}
-			STATE.PushScope (stype);
 			Expect (Type.LCBraket);
 			//TODO implement Structure inside structure
 			VarCreate (true);
@@ -513,16 +520,6 @@ public class YSRDParser
 				Expect (Type.Semicolon);
 			}
 			Expect (Type.RCBraket);
-			stype = STATE.PopScope ();
-			if (isChild) {
-				//parent.Structures.Add (structureName, stype);
-				STATE.PushScope(parent);
-				STATE.PutParseStructure (structureName, stype);
-				STATE.PopScope ();
-			} else {
-				STATE.PutParseStructure (structureName, stype);
-			}
-
 			PopAndInsertParseNode ();
 			return true;
 		} else {
@@ -537,46 +534,27 @@ public class YSRDParser
 		//( var-create| condition | loop | structure | ( return expression ; ) )
 		Debug ("Function...(" + current.Content + " type " + current.Type + ")");
 
-		IdentityType type = IdentityType.Unknown;
-
 		if (Accept (Type.Function)) {
 			PushParseNode (ParseNodeType.Function);
 
 			Expect (Type.Identity);
 			CreateTerminalChild (previous);
 			string functionName = previous.Content;
-
-			if (STATE.IdentityExists (functionName))
-				Error ("Variable named " + functionName + " already exists in this scope");
-
-			FunctionType ftype = STATE.PrepareEmptyFunction ();
-
 			PushParseNode (ParseNodeType.FunctionParamList);
 
 			Expect (Type.LParen);
 			if (!Accept (Type.RParen)) {
-				FunctionParamater fp = new FunctionParamater ();
-				Console.WriteLine (current.Content);
+				Debug (current.Content);
 				if (DataType (false)) {
-					//Console.WriteLine ("check");
 					CreateTerminalChild (previous);
-					fp.Type = STATE.TranslateTokenTypeToIdentityType (previous.Type);
-					//Console.WriteLine ("check2");
 					Expect (Type.Identity);
 					CreateTerminalChild (previous);
-					fp.Name = previous.Content;
-					ftype.Parameters.Add (fp);
 				}
 				while (Accept (Type.Comma)) {
-					fp = new FunctionParamater ();
 					DataType (true);
 					CreateTerminalChild (previous);
-					fp.Type = STATE.TranslateTokenTypeToIdentityType (previous.Type);
 					Expect (Type.Identity);
 					CreateTerminalChild (previous);
-					fp.Name = previous.Content;
-
-					ftype.Parameters.Add (fp);
 				}
 			}
 			Expect (Type.RParen);
@@ -584,48 +562,9 @@ public class YSRDParser
 			
 			Expect (Type.Colon);
 			DataType (true);
-			ftype.Returns = STATE.TranslateTokenTypeToIdentityType(previous.Type);
 			CreateTerminalChild (previous);
-			Expect (Type.LCBraket);
-			ftype.Start = PC;
+			Block (true);
 
-			STATE.PutParseFunction (functionName, ftype);
-
-			Console.WriteLine ("Check");
-
-			STATE.PushScope(STATE.GetFunctionScope (ftype));
-
-			Console.WriteLine ("Check");
-
-			PushParseNode (ParseNodeType.Block);
-
-			while (!Accept(Type.RCBraket)) {
-				PushParseNode (ParseNodeType.Statement);
-
-				if (VarCreate (false)) {
-					Expect (Type.Semicolon);
-				}else if(Condition (false)) {
-				}else if(Loop (false)) {
-				}else if(Structure (false)) {
-				}else if (Accept (Type.Return)) {
-					PopParseNode ();
-					PushParseNode (ParseNodeType.FunctionReturn);
-
-					IdentityType X1 = IdentityType.Unknown;
-					Expression (ref X1);
-					if (ftype.Returns != X1)
-						Error ("Function " + functionName + " must return " + type);
-					Expect (Type.Semicolon);
-
-					PopAndInsertParseNode ();
-				}
-
-				PopAndInsertParseNode ();
-			}
-
-			PopAndInsertParseNode ();
-
-			STATE.PopScope ();
 			PopAndInsertParseNode ();
 			return true;
 		} else {
@@ -635,213 +574,131 @@ public class YSRDParser
 		}
 	}
 
-	void Block()
+	void Block(bool Expect_Sub)
 	{
 		PushParseNode (ParseNodeType.Block);
-
-		if (Accept (Type.LCBraket)) {
-			while (!Accept(Type.RCBraket)) {
+		if (Expect (Type.LCBraket)) {
+			while (!Accept (Type.RCBraket)) {
 				Statement ();
 			}
-			Expect (Type.RCBraket);
+			PopAndInsertParseNode ();
+		} else {
+			if (Expect_Sub)
+				Error ("Expecting a block");
 		}
-
-		PopAndInsertParseNode ();
 	}
 
-	void Expression (ref IdentityType type)
+	void Expression ()
 	{
-		if (ExpressionList (ref type)) {
-			type = IdentityType.List;
+		if (Accept(Type.LSBraket)) {
+			ExpressionList ();
+			Expect (Type.RSBraket);
 		} else {
 			PushParseNode (ParseNodeType.Expression);
-			ExprLogic  (ref type);
-			Debug ("Expression type " + type);
+			ExprLogic  ();
 			PopAndInsertParseNode ();
 		}
 	}
 
-	bool ExpressionList(ref IdentityType type)
+	void ExpressionList()
 	{
-		if (Accept (Type.LSBraket)) {
-			PushParseNode (ParseNodeType.ExpressionList);
-			type = IdentityType.List;
-			if (!Accept (Type.RSBraket)) {
-				Expression (ref type);
-				while (Accept (Type.Comma)) {
-					Expression (ref type);
-				}
+		PushParseNode (ParseNodeType.ExpressionList);
+		if (!Accept (Type.RSBraket)) {
+			Expression ();
+			while (Accept (Type.Comma)) {
+				Expression ();
 			}
-			Expect (Type.RSBraket);
-			PopAndInsertParseNode ();
-			return true;
-		} else {
-			return false;
 		}
+		PopAndInsertParseNode ();
 	}
 
-	void ExprLogic (ref IdentityType type)
+	void ExprLogic ()
 	{
 		PushParseNode (ParseNodeType.ExpressionLogic);
-
-		IdentityType X1 = IdentityType.Unknown;
-		ExprBool (ref X1);
-
-		Boolean booltype = false;
-		int stackCount = 0;
+		if (Accept (Type.Not)) {
+			CreateTerminalChild (previous);
+		}
+		ExprBool ();
 		while (Accept (Type.And) || Accept (Type.Or)) {
 			CreateTerminalChild (previous);
-			PushParseNode (ParseNodeType.ExpressionLogic);
-
-			IdentityType X2 = IdentityType.Unknown;
-			ExprBool (ref  X2);
-			ExpectType (IdentityType.Boolean, X2);
-			booltype = true;
-
-			stackCount++;
+			//PushParseNode (ParseNodeType.ExpressionLogic);
+			if (Accept (Type.Not)) {
+				CreateTerminalChild (previous);
+			}
+			ExprBool ();
 			//PopAndInsertParseNode ();
 		}
-		for (int i = 0; i < stackCount; i++)
-			PopAndInsertParseNode ();
-
-		type = (booltype) ? IdentityType.Boolean : X1;
-
 		PopAndInsertParseNode ();
 	}
 
-	void ExprBool (ref IdentityType type)
+	void ExprBool ()
 	{
 		PushParseNode (ParseNodeType.ExpressionBoolean);
-
-		bool not = false;
-		if (Accept (Type.Not))
-			not = true;
-
-		IdentityType X1 = IdentityType.Unknown;
-		ExprNum  (ref X1);
-		if (not) {
-			ExpectType (IdentityType.Boolean, X1);
-		}
-		int stackCount = 0;
+		ExprNum  ();
 		while (CompOpr (false)) {
 			CreateTerminalChild (previous);
-			PushParseNode (ParseNodeType.ExpressionBoolean);
-		
-			IdentityType X2 = IdentityType.Unknown;
-			ExprNum  (ref  X2);
-			ExpectType (IdentityType.Boolean, X2);
-			not = true;
-
+			//PushParseNode (ParseNodeType.ExpressionBoolean);
+			ExprNum  ();
 			//PopAndInsertParseNode ();
-			stackCount++;
 		}
-		for (int i = 0; i < stackCount; i++)
-			PopAndInsertParseNode ();
-		
-		type = (not) ? IdentityType.Boolean : X1;
-
 		PopAndInsertParseNode ();
 	}
 
-	void ExprNum (ref IdentityType type)
+	void ExprNum ()
 	{
 		PushParseNode (ParseNodeType.ExpressionNumber);
-
-		bool sign = false;
-		if (Accept (Type.Plus) || Accept (Type.Minus))
-			sign = true;
-		
-		IdentityType X1 = IdentityType.Unknown;
-		ExprTerm  (ref X1);
-		if (sign)
-			ExpectType (IdentityType.Number, X1);
-		int stackCount = 0;
+		if (Accept (Type.Minus)) {
+			CreateTerminalChild (previous);
+		}
+		ExprTerm  ();
 		while (Accept (Type.Plus) || Accept(Type.Minus)) {
 			CreateTerminalChild (previous);
-			PushParseNode (ParseNodeType.ExpressionNumber);
-
-			IdentityType X2 = IdentityType.Unknown;
-			ExprTerm (ref X2);
-			ExpectType (IdentityType.Number, X2);
-			sign = true;
-
+			//PushParseNode (ParseNodeType.ExpressionNumber);
+			if (Accept (Type.Minus)) {
+				CreateTerminalChild (previous);
+			}
+			ExprTerm ();
 			//PopAndInsertParseNode ();
-			stackCount++;
 		}
-		for (int i = 0; i < stackCount; i++)
-			PopAndInsertParseNode ();
-		
-		type = (sign) ? IdentityType.Number : X1;
-
 		PopAndInsertParseNode ();
 	}
 
-	void ExprTerm (ref  IdentityType type)
+	void ExprTerm ()
 	{
+		Debug ("Term - token: " + current.Content);
 		PushParseNode (ParseNodeType.ExpressionTerm);
-
-		Console.WriteLine ("Term - token: " + current.Content);
-		IdentityType X1 = IdentityType.Unknown;
-		ExprFactor  (ref X1);
-		bool once = false;
-		int stackCount = 0;
-		while (Accept (Type.Asterisk) || Accept(Type.Slash)) {
+		ExprFactor ();
+		while (Accept (Type.Asterisk) || Accept(Type.Slash) || Accept(Type.Percentage)) {
 			CreateTerminalChild (previous);
-			PushParseNode (ParseNodeType.ExpressionTerm);
-
-			if (!once)
-				ExpectType (IdentityType.Number, X1);
-			else
-				once = true;
-			
-			IdentityType X2 = IdentityType.Unknown;
-			ExprFactor (ref X2);
-			ExpectType (IdentityType.Number, X2);
-
+			//PushParseNode (ParseNodeType.ExpressionTerm);
+			ExprFactor ();
 			//PopAndInsertParseNode ();
-			stackCount++;
 		}
-
-		for (int i = 0; i < stackCount; i++)
-			PopAndInsertParseNode ();
-		if (!once)
-			type = X1;
-		else
-			type = IdentityType.Number;
-
 		PopAndInsertParseNode ();
 	}
 
-	void ExprFactor (ref IdentityType type)
+	void ExprFactor ()
 	{
 		PushParseNode (ParseNodeType.ExpressionFactor);
 
-		Console.WriteLine ("Factor - token: " + current.Content);
-		IdentityType id_type = IdentityType.Unknown;
-		if (Identity(false, ref type, ref id_type)) {
+		Debug ("Factor - token: " + current.Content);
+		if (Identity(false)) {
 		} else if (Accept(Type.NumberData)) {
 			PushParseNode (ParseNodeType.Number);
 			CreateTerminalChild (previous);
 			PopAndInsertParseNode ();
-			type = IdentityType.Number;
-			/*double numberValue;
-			if (Double.TryParse (previous.Content, out numberValue))
-				STATE.PutNumber (value, numberValue);
-			else
-				Error ("Expecting a number, found " + previous.Content);*/
 		} else if (Accept(Type.TextData)) {
 			PushParseNode (ParseNodeType.Text);
 			CreateTerminalChild (previous);
 			PopAndInsertParseNode ();
-			type = IdentityType.Text;
-			//STATE.PutText (value, previous.Content);
 		} else if (Accept (Type.LParen)) {
-			PushParseNode (ParseNodeType.ExpressionFactor);
-			Expression  (ref type);
+			PushParseNode (ParseNodeType.Expression);
+			Expression  ();
 			Expect (Type.RParen);
 			PopAndInsertParseNode ();
 		} else {
 			Error ("Expecting a data, a number, operator or other identity of an expression");
+			PopParseNode ();
 		}
 
 		PopAndInsertParseNode ();
@@ -849,7 +706,8 @@ public class YSRDParser
 
 	bool CompOpr(bool Expect_Sub)
 	{
-		if (Accept (Type.Equals) || Accept (Type.GreaterThan) || Accept (Type.LessThan)) {
+		if (Accept (Type.Equals) || Accept (Type.GreaterThan) || Accept (Type.LessThan) 
+			|| Accept (Type.GreaterThanEqual) || Accept (Type.LessThanEqual)) {
 			return true;
 		} else {
 			if(Expect_Sub)
@@ -858,20 +716,58 @@ public class YSRDParser
 		}
 	}
 
-
-	bool Identity(bool Expect_Sub, ref IdentityType type, ref IdentityType identity_type)
+	YSToken GlobalIdentity;
+	List<YSToken> ParentIdentity;
+	void PushGlobalAndParentKW()
 	{
-		Console.WriteLine ("Identity - token: " + current.Content);
-		if (Accept (Type.Identity)) {
-			Token identityToken = previous;
-			if (IdentityPrimitive (false, ref type)) {
-				identity_type = type;
-			} else if (IdentityFunction (false, ref type)) {
-				identity_type = IdentityType.Function;
-			} else if (IdentityStructure (false, ref type)) {
-				identity_type = IdentityType.Structure;
+		if (GlobalIdentity != null) {
+			CreateTerminalChild (GlobalIdentity);
+		} else if (ParentIdentity.Count > 0) {
+			PushParseNode (ParseNodeType.Parent);
+			for (int i = 0; i < ParentIdentity.Count; i++) {
+				CreateTerminalChild (ParentIdentity [i]);
+			}
+			PopAndInsertParseNode ();
+		}
+	}
+
+	bool Identity(bool Expect_Sub)
+	{
+		return Identity (Expect_Sub, false);
+	}
+
+	bool Identity(bool Expect_Sub, bool dataType)
+	{
+		Debug ("Identity - token: " + current.Content);
+		//Reset Global and Parent Nodes
+		GlobalIdentity = null;
+		ParentIdentity = new List<Token> ();
+		Token identityToken = null;
+		if (Accept (Type.Global)) {
+			GlobalIdentity = previous;
+			Expect (Type.Period);
+		} else if (Accept (Type.Parent)) {
+			ParentIdentity.Add (previous);
+			while (Accept (Type.Period))
+				if (Accept (Type.Parent)) {
+					ParentIdentity.Add (previous);
+				} else if (Accept (Type.Identity)) {
+					identityToken = previous;
+					break;
+				} else {
+					Error ("Parent keyword must be followed by another parent keyword or identity");
+				}
+		}
+		if (identityToken != null || Accept(Type.Identity)) {
+			identityToken = previous;
+			if (Accept (Type.LParen)) {
+				if (dataType)
+					Error ("Expecting a data type, not a function");
+				IdentityFunction (identityToken);
+			} else if (Accept (Type.Period)) {
+				IdentityStructure (identityToken);
 			} else {
-				Error ("Could not resolve the identity " + identityToken.Content);
+				IdentityPrimitive (identityToken);
 			}
 			return true;
 		} else {
@@ -881,119 +777,44 @@ public class YSRDParser
 		}
 	}
 
-
-	bool IdentityPrimitive(bool Expect_Sub, ref IdentityType type)
+	void IdentityPrimitive(YSToken identityToken)
 	{
-		Debug ("Identity Primitive - token: " + previous.Content);
-
-		Token identityToken = previous;
-
-		IdentityType itype = STATE.ResolveIdentityType (identityToken);
-		if (STATE.IsPrimitive(itype)) {
-			if (Accept (Type.LSBraket)) {
-				//indentity[number]
-				PushParseNode(ParseNodeType.IdentityArray);
-				CreateTerminalChild (identityToken);
-
-				IdentityType _type = new IdentityType();
-				Expression (ref  _type);
-				ExpectType (IdentityType.Number, _type);
-				Expect (Type.RSBraket);
-				type = itype;
-				Console.WriteLine ("Resolved primitive value from array " + identityToken.Content + " of type " + type);
-
-				PopAndInsertParseNode ();
-				return true;
-			} else {
-				PushParseNode (ParseNodeType.Identity);
-				CreateTerminalChild (identityToken);
-				type = itype;
-				Console.WriteLine ("Resolved primitive value from variable " + identityToken.Content + " of type " + type);
-				PopAndInsertParseNode ();
-				return true;
-			}
-		} else {
-			Console.WriteLine ("Could not resolve " + identityToken.Content + " as a primitive");
-			if (Expect_Sub)
-				Error ("Expecting a primitive variable");
-			type = itype;
-			return false;
-		}
+		//Identity Simple
+		PushParseNode (ParseNodeType.Identity);
+		PushGlobalAndParentKW ();
+		CreateTerminalChild (identityToken);
+		PopAndInsertParseNode ();
 	}
 
-	bool IdentityStructure(bool Expect_Sub, ref IdentityType type)
+	void IdentityStructure(YSToken identityToken)
 	{
-		Debug ("Idenitity Structure...");
-		Token identityToken = previous;
-		IdentityType itype = STATE.ResolveIdentityType (identityToken);
-		if (itype == IdentityType.Structure)
-		{
-			PushParseNode (ParseNodeType.IdentityStructure);
-			CreateTerminalChild (identityToken);
-
-			StructureType child;
-			//switch to nested structure context
-			if (!STATE.TryGetParseStructure (identityToken.Content, out child))
-				Error ("Internal Structure loading error...");
-			STATE.PushScope (child);
-			Debug ("Pushed scope: " + identityToken.Content);
-
-			while(Accept(Type.Period)){
-				IdentityType I1 = IdentityType.Unknown, I2 = IdentityType.Unknown;
-
-				Identity (true, ref I1, ref I2);
-				itype = I1;
-				type = itype;
-			}
-
-			Debug ("Popped Scope");
-			STATE.PopScope ();
-			PopAndInsertParseNode ();
-			return true;
-		} else {
-			Console.WriteLine ("Could not resolve " + identityToken.Content + " as a Structure");
-			if (Expect_Sub)
-				Error ("Expecting a structure");
-			return false;
-		}
+		//Identity Structure
+		PushParseNode (ParseNodeType.IdentityStructure);
+		PushGlobalAndParentKW ();
+		CreateTerminalChild (identityToken);
+		Identity (true);
+		while (Accept (Type.Period))
+			Identity (true);
+		PopAndInsertParseNode ();
 	}
 
-	bool IdentityFunction(bool Expect_Sub, ref IdentityType type)
+	void IdentityFunction(YSToken identityToken)
 	{
-		Debug ("Idenitity Function...");
-		Token identityToken = previous;
-		IdentityType itype = STATE.ResolveIdentityType (identityToken);
-
-		if (itype == IdentityType.Function) {
-			PushParseNode (ParseNodeType.IdentityFunction);
-			CreateTerminalChild (identityToken);
-
-			string functionName = identityToken.Content;
-
-			Expect (Type.LParen);
-			FunctionType ftype;
-			if (!STATE.TryGetParseFunction (functionName, out ftype))
-				Error ("No function with the name " + identityToken.Content);
-			type = ftype.Returns;
-			int pcount = 0;
-			if (!Accept (Type.RParen)) {
-				IdentityType P1 = IdentityType.Unknown;
-				Expression (ref  P1);
-				ExpectType (ftype.Parameters [pcount++].Type, P1);
-				while (Accept (Type.Comma)) {
-					Expression (ref  P1);
-					ExpectType (ftype.Parameters [pcount++].Type, P1);
-				}
-				Expect (Type.RParen);
-			}
+		//Identity Function
+		PushParseNode (ParseNodeType.IdentityFunction);
+		PushGlobalAndParentKW ();
+		CreateTerminalChild (identityToken);
+		if (Accept (Type.RParen)) {
 			PopAndInsertParseNode ();
-			return true;
-		} else {
-			Console.WriteLine ("Could not resolve " + identityToken.Content + " as a Function");
-			if (Expect_Sub)
-				Error ("Expecting function call");
-			return false;
+			return;
 		}
+		PushParseNode (ParseNodeType.FunctionParamList);
+		Expression ();
+		while (Accept(Type.Comma))
+			Expression ();
+		Expect (Type.RParen);
+		PopAndInsertParseNode ();
+		PopAndInsertParseNode ();
 	}
 		
 	void Stop()
