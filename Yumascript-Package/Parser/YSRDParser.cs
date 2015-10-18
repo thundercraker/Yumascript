@@ -45,7 +45,7 @@ public class YSRDParser
 			return program_tokens [PC + 1];
 		}
 	}
-		
+
 	YSParseNode current_node {
 		get {
 			return parse_nodes.Peek();
@@ -59,7 +59,7 @@ public class YSRDParser
 	}
 
 	void PopAndInsertParseNode() {
-		
+
 		YSParseNode previous_node = parse_nodes.Pop();
 		Debug ("Popped " + previous_node.Type + " Stack height " + parse_nodes.Count + " Children of Current Before " + current_node.Children.Count);
 		current_node.Children.Add (previous_node);
@@ -78,7 +78,7 @@ public class YSRDParser
 		Debug ("Last node type " + node.Type);
 		return node;
 	}
- 
+
 	void PushParseNode(ParseNodeType Type)
 	{
 		Debug ("Pushing " + Type + " Stack height " + parse_nodes.Count); 
@@ -586,7 +586,7 @@ public class YSRDParser
 			}
 			Expect (Type.RParen);
 			PopAndInsertParseNode ();
-			
+
 			Expect (Type.Colon);
 			bool IsA;
 			DataType (true, out IsA);
@@ -847,7 +847,7 @@ public class YSRDParser
 		PopAndInsertParseNode ();
 		PopAndInsertParseNode ();
 	}
-		
+
 	void Stop()
 	{
 		program_tokens.Clear ();
@@ -883,4 +883,3 @@ public class YSRDParser
 		}
 	}
 }
-

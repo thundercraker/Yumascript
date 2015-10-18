@@ -70,9 +70,10 @@ public class YSInterpreter
 		Current = ProgramNode;
 		Debug(String.Format("Program Node with {0} children", ProgramNode.Children.Count));
 
-		Header (ProgramNode.Children [0]);
-
-		int SCNT = 1;
+		if (ProgramNode.Children.Count < 1)
+			return true;
+		int SCNT = 0;
+		Header (ProgramNode.Children [SCNT++]);
 		while (SCNT < ProgramNode.Children.Count) {
 			try{
 				Statement (ProgramNode.Children[SCNT++]);
@@ -100,7 +101,7 @@ public class YSInterpreter
 
 	void Header(YSParseNode HeaderNode)
 	{
-		foreach (YSParseNode HeaderItem in HeaderNode) {
+		foreach (YSParseNode HeaderItem in HeaderNode.Children) {
 			if (HeaderItem.Type == NType.Import) {
 				//TODO Importer
 			} else {

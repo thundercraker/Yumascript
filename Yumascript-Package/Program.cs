@@ -13,7 +13,7 @@ class MainClass
 			{
 				raw = sr.ReadToEnd();
 			}
-			YSLexer.DEBUG 		= false;
+			YSLexer.DEBUG 		= true;
 			YSRDParser.DEBUG	= true;
 			YSInterpreter.DEBUG = true;
 			YSStateModule.DEBUG	= true;
