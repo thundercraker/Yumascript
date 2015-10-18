@@ -12,6 +12,7 @@ using StateException = YSStateModule.StateException;
 
 public class YSInterpreter
 {
+	public static string CONSOLE_TAG = "[Interpreter]";
 	public static bool DEBUG = false;
 	public static bool VERBOSE = false;
 	public static int ERR_ACCEPT = 1;
@@ -69,15 +70,27 @@ public class YSInterpreter
 		Current = ProgramNode;
 		Debug(String.Format("Program Node with {0} children", ProgramNode.Children.Count));
 
-		int SCNT = 0;
+		Header (ProgramNode.Children [0]);
+
+		int SCNT = 1;
 		while (SCNT < ProgramNode.Children.Count) {
 			try{
 				Statement (ProgramNode.Children[SCNT++]);
 			}catch(InterpreterException){
-				Debug ("[Interpreter Exception] Exiting Program..");
+				if (ERR_ACCEPT-- > 0) {
+					Debug ("Interpreter Error triggered Panic Status");
+					continue;
+				} else {
+					Debug ("Maximum error leniency reached. Exiting interpretation");
+				}
 				return false;
 			}catch(StateException){
-				Debug ("[State Exception] Exiting Program..");
+				if (ERR_ACCEPT-- > 0) {
+					Debug ("State Error triggered Panic Status");
+					continue;
+				} else {
+					Debug ("Maximum error leniency reached. Exiting interpretation");
+				}
 				return false;
 			}
 		}
@@ -85,10 +98,24 @@ public class YSInterpreter
 		return true;
 	}
 
+	void Header(YSParseNode HeaderNode)
+	{
+		foreach (YSParseNode HeaderItem in HeaderNode) {
+			if (HeaderItem.Type == NType.Import) {
+				//TODO Importer
+			} else {
+				Error ("Unrecognized header type");
+			}
+		}
+	}
+
 	void Statement(YSParseNode StatementNode)
 	{
 		//Statements have only one child
 		Current = StatementNode;
+		if (StatementNode.Children.Count < 1) {
+			Error ("Empty Statement Error");
+		}
 		YSParseNode StatementChild = StatementNode.Children [0];
 		switch (StatementChild.Type) {
 		case NType.VarCreate:
@@ -139,7 +166,8 @@ public class YSInterpreter
 			if (StatementNode.Type == NType.Statement) {
 				Statement (StatementNode);
 			} else if (StatementNode.Type == NType.FunctionReturn) {
-				//TODO handle function returned
+				if (STATE.current_scope.Type != ScopeFrame.FrameTypes.Function)
+					Error ("Only functions can have return statements");
 				if (StatementNode.Children.Count == 1) {
 					IDPacket EXP = Expression (StatementNode.Children [0]);
 					IDPacket RETURN = IDPacket.CreateReturnPacket (EXP.Type);
@@ -156,11 +184,26 @@ public class YSInterpreter
 	void VarCreate(YSParseNode VarCreateNode)
 	{
 		Current = VarCreateNode;
-		YSToken DataTypeToken = VarCreateNode.Children[0].Token;
-		IdentityType IType = STATE.TranslateTokenTypeToIdentityType (DataTypeToken.Type);
-
-		for (int i = 1; i < VarCreateNode.Children.Count; i++) {
-			VarPrimitive (VarCreateNode.Children[i], IType);
+		List<int> Dimensions;
+		IdentityType _DataType;
+		DataType (VarCreateNode.Children [0], out _DataType, out Dimensions);
+		if (Dimensions.Count > 0) {
+			YSToken NameToken = VarCreateNode.Children [1].Token;
+			if (VarCreateNode.Children [2].Type == NType.ExpressionList) {
+				IdentityType ResolvedType = IdentityType.Unknown;
+				List<int> ReversedDimensions = new List<int> ();
+				IDPacket exp_list = ExpressionList (VarCreateNode.Children [1], ref ReversedDimensions, ref ResolvedType);
+				IDPacket put = IDPacket.CreateIDPacket (STATE, NameToken.Content, IdentityType.Structure);
+				STATE.COPY (put, exp_list);
+			} else if(VarCreateNode.Children [2].Type == NType.ArrayInit) {
+				//TODO array initializer
+			} else {
+				Error("Arrays must be initialized with an expression list or array initializer");
+			}
+		} else {
+			for (int i = 1; i < VarCreateNode.Children.Count; i++) {
+				VarPrimitive (VarCreateNode.Children [i], _DataType);
+			}
 		}
 		Debug ("Exit VarCreate");
 	}
@@ -261,6 +304,41 @@ public class YSInterpreter
 		Debug ("Exit Structure");
 	}
 
+	bool DataType(YSParseNode DataTypeNode, out IdentityType Type, out List<int> Dimensions)
+	{
+		Debug ("Beginning a Data Type");
+
+		Dimensions = new List<int> ();
+
+		if (DataTypeNode.Children.Count < 1) {
+			Type = IdentityType.Unknown;
+			return false;
+		} else if (DataTypeNode.Children.Count > 1) {
+			Dimensions = null;
+			Type = STATE.TranslateTokenTypeToIdentityType (DataTypeNode.Children [1].Token.Type);
+			YSParseNode ADNode = DataTypeNode.Children [2];
+			foreach (YSParseNode Terminal in ADNode.Children) {
+				if (Terminal.Token.Type != YSToken.TokenType.NumberData && 
+					Terminal.Token.Type != YSToken.TokenType.Asterisk)
+					Error ("Expecting a number or *");
+				if (Terminal.Token.Type == YSToken.TokenType.Asterisk)
+					Dimensions.Add (-1);
+				else {
+					int dimval = int.Parse (Terminal.Token.Content);
+					if (dimval < 0)
+						Error ("Dimension values cannot be under 0");
+					Dimensions.Add (dimval);
+				}
+			}
+			return true;
+		} else {
+			Dimensions = new List<int>();
+			Type = STATE.TranslateTokenTypeToIdentityType(DataTypeNode.Children [0].Token.Type);
+			return true;
+		}
+		Debug ("Exiting Data Type");
+	}
+
 	void Function(YSParseNode FunctionNode)
 	{
 		Debug ("Beginning a function definition");
@@ -269,7 +347,12 @@ public class YSInterpreter
 		ExpectNonExistance (FunctionName);
 		FunctionFrame FunctionFrame = new FunctionFrame ();
 		FunctionParamList (FunctionNode.Children [1], ref FunctionFrame);
-		FunctionFrame.Returns = STATE.TranslateTokenTypeToIdentityType (FunctionNode.Children [2].Token.Type);
+		IdentityType IType;
+		List<int> Dimens;
+		DataType (FunctionNode.Children [2], out IType, out Dimens);
+		FunctionFrame.Returns = IType;
+		FunctionFrame.ReturnDimensions = Dimens.ToArray ();
+		//STATE.TranslateTokenTypeToIdentityType (FunctionNode.Children [2].Token.Type);
 		FunctionFrame.Block = FunctionNode.Children [3];
 
 		IDPacket newFunction = IDPacket.CreateIDPacket (STATE, FunctionName, IdentityType.Function);
@@ -286,13 +369,100 @@ public class YSInterpreter
 			int FPC = 0;
 			while (FPC < FunctionParamListNode.Children.Count) {
 				FunctionParamater fp = new FunctionParamater ();
-				fp.Type = STATE.TranslateTokenTypeToIdentityType (FunctionParamListNode.Children [FPC++].Token.Type);
+				//fp.Type = STATE.TranslateTokenTypeToIdentityType (FunctionParamListNode.Children [FPC++].Token.Type);
+				List<int> Dimens;
+				DataType (FunctionParamListNode.Children [FPC++], out fp.Type, out Dimens);
+				fp.TypeDimensions = Dimens.ToArray ();
 				//Debug ("Type " + fp.Type + " Token " + FunctionParamListNode.Children [FPC].Token.Type);
 				fp.Name = FunctionParamListNode.Children [FPC++].Token.Content;
 				Frame.Parameters.Add (fp);
 			}
 		}
 		Debug ("Read param list...");
+	}
+
+	int DIMCNT = 0;
+	IdentityType RESOLVED_TYPE = IdentityType.Unknown;
+	IDPacket ExpressionList(YSParseNode ExpressionListNode, ref List<int> DimensionsReversed, ref IdentityType ResolvedType) 
+	{
+		DIMCNT = 0;
+		Debug ("Expression List Resolving");
+		IDPacket ARRAY = IDPacket.CreateSystemPacket ("EXPL_TEMP", IdentityType.List);
+		StructureFrame ArrayFrame = new StructureFrame ();
+		//STATE.PutStructure (ARRAY, ArrayFrame);
+
+		IDPacket EXPL = IDPacket.CreateSystemPacket ("EXPL_RESV", IdentityType.List);
+		if (ExpressionListNode.Children.Count < 1) {
+			Debug ("Expression List had no children");
+			STATE.PutStructure (EXPL, ArrayFrame);
+			return EXPL;
+		}
+
+		STATE.PushScope ((ScopeFrame)ArrayFrame);
+		//List<IDPacket> RESULT = new List<IDPacket> ();
+		//Look at the first node, all other nodes must conform to this node's type
+		int NC = 0;
+		YSParseNode FirstNode = ExpressionListNode.Children [NC++];
+		//IdentityType ListType;
+		int ListDimensions = 0;
+		if (FirstNode.Type == NType.ExpressionList) {
+			ListDimensions++;
+			IDPacket IEXPL = ExpressionList (FirstNode, ref DimensionsReversed, ref ResolvedType);
+			DimensionsReversed.Add (DIMCNT);
+			//RESULT.Add (IEXPL);
+			IDPacket FIRST = IDPacket.CreateIDPacket (STATE, "0", IdentityType.Structure);
+			STATE.COPY (FIRST, IEXPL);
+		} else {
+			IDPacket EXP = Expression (FirstNode);
+			ResolvedType = EXP.Type;
+			//RESULT.Add (EXP);
+			if (!STATE.IsPrimitive (ResolvedType))
+				Error ("Expression Lists can only contain identities that resolve to Primitive Types");
+			IDPacket FIRST = IDPacket.CreateIDPacket (STATE, "0", EXP.Type);
+			STATE.COPY (FIRST, EXP);
+		}
+		int ELEMENT_COUNT = 1;
+		while (NC < ExpressionListNode.Children.Count) {
+			YSParseNode Node = ExpressionListNode.Children [NC++];
+			if (Node.Type != FirstNode.Type)
+				Error (String.Format("All children in an expression list must have the same dimensions " +
+					"Expecting {0} got {1}",
+					FirstNode.Type, Node.Type));
+			if (FirstNode.Type == NType.ExpressionList) {
+				IdentityType NodeType = IdentityType.Unknown;
+				int NodeDimensions = 0;
+				IDPacket NEXPL = ExpressionList (Node, ref DimensionsReversed, ref NodeType);
+				if (NodeDimensions != ListDimensions) {
+					Error (String.Format ("All children of an expression list must have matching dimensions. " +
+					"Expected dimensions:{0} Found:{1}",
+						ListDimensions, NodeDimensions));
+				}
+				if (NodeType != ResolvedType) {
+					Error (String.Format ("All children of an expression list must have matching types. " +
+					"Expected type:{0} Found:{1}",
+						ResolvedType, NodeType));
+				}
+				//RESULT.Add (NEXPL);
+				IDPacket NODE = IDPacket.CreateIDPacket (STATE, "" + ELEMENT_COUNT++, IdentityType.Structure);
+				STATE.COPY (NODE, NEXPL);
+			} else {
+				IDPacket NEXP = Expression (Node);
+				if (NEXP.Type != ResolvedType) {
+					Error (String.Format ("All children of an expression list must have matching types. " +
+					"Expected type:{0} Found:{1}",
+						ResolvedType, NEXP.Type));
+				}
+				//RESULT.Add (NEXP);
+				IDPacket NODE = IDPacket.CreateIDPacket (STATE, "" + ELEMENT_COUNT++, NEXP.Type);
+				STATE.COPY (NODE, NEXP);
+			}
+		}
+		DIMCNT = ELEMENT_COUNT;
+		ArrayFrame = (StructureFrame)STATE.PopScopeNoSave ();
+		STATE.PutStructure (ARRAY, ArrayFrame);
+
+		//ResolvedType = RESOLVED_TYPE;
+		return ARRAY;
 	}
 		
 	//IDPacket id - IDPacket is the address to the location where the resolved
@@ -526,7 +696,20 @@ public class YSInterpreter
 		//Create bindings
 		List<IDPacket> Bindings = new List<IDPacket> ();
 		foreach (YSParseNode arg in IFunctionNode.Children[1].Children) {
-			IDPacket argexp = Expression (arg);
+			IDPacket argexp;
+			if (arg.Type == NType.Expression) {
+				argexp = Expression (arg);
+			} else if (arg.Type == NType.ExpressionList) {
+				List<int> dims = new List<int> ();
+				IdentityType ResolvedType = IdentityType.Unknown;
+				argexp = ExpressionList (arg, ref dims, ref ResolvedType);
+				argexp.ArrayType = ResolvedType;
+				dims.Reverse ();
+				argexp.TypeDimensions = dims.ToArray ();
+			} else {
+				Error ("Expecting either an expression or an expression list");
+				argexp = IDPacket.CreateSystemPacket ("TRASH", IdentityType.Unknown);
+			}
 			Bindings.Add (argexp);
 		}
 
@@ -563,7 +746,7 @@ public class YSInterpreter
 		string name = Current.Token.Content;
 		int location = Current.Token.Position;
 		if(VERBOSE)
-			Console.WriteLine (String.Format("[Verbose near {0} @ {1}] {2} ", name, location, s));
+			Console.WriteLine (String.Format(CONSOLE_TAG + "[Verbose near {0} @ {1}] {2} ", name, location, s));
 	}
 
 	void Debug(String s)
@@ -572,14 +755,14 @@ public class YSInterpreter
 		string name = Current.Token.Content;
 		int location = Current.Token.Position;
 		if(DEBUG)
-			Console.WriteLine (String.Format("[Debug near {0} @ {1}] {2} ", name, location, s));
+			Console.WriteLine (String.Format(CONSOLE_TAG + "[Debug near {0} @ {1}] {2} ", name, location, s));
 	}
 
 	void Error(String s)
 	{
 		string name = Current.Token.Content;
 		int location = Current.Token.Position;
-		Console.WriteLine (String.Format("[Error near {0} @ {1}] {2} ", name, location, s));
+		Console.WriteLine (String.Format(CONSOLE_TAG + "[Error near {0} @ {1}] {2} ", name, location, s));
 		throw new InterpreterException ("Interpreter Exception");
 	}
 

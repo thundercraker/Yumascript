@@ -7,6 +7,7 @@ using Type = YSToken.TokenType;
 //TODO Create Function Scope from Existing function and feed it to FindNameScope
 
 public class YSStateModule	{
+	public static string CONSOLE_TAG = "[State]";
 	public static bool DEBUG = false;
 	public static bool VERBOSE = false;
 	/*public enum DataType { Boolean, Number, Text, List, GameObject, Structure, Unknown };*/
@@ -68,6 +69,16 @@ public class YSStateModule	{
 		}
 	}
 
+	/* Address format:
+	 * <type>:<name>
+	 * s:<name> - structure
+	 * f:<name> - function
+	 * l:<name> - loop
+	 * u - unknown
+	 * 
+	 * [feature redacted] ..	go back into parent scope
+	 * / 	global scope
+	 */
 	void FindNameScope(IDPacket packet, out ScopeFrame scope)
 	{
 		Debug("Attempting to find scope of " + packet.Address + ", name: " + packet.Name);
@@ -83,13 +94,19 @@ public class YSStateModule	{
 
 		string[] path = pathList.ToArray ();
 		scope = Global_Scope;
-		int SCNT = 0;
+		int PARENT_COUNTER = 0;
 		ScopeFrame[] _SS = Scope_Stack.ToArray ();
 		for (int i = 0; i < path.Length; i++) {
-			/*if (str.Length > 0 && !scope.Structures.TryGetValue (str, out scope) && !) {
-				throw new Exception ("IDPacket Address is corrupt: " + packet.Address);
-			}*/
 			string str = path [i];
+
+			/* -- parent keyword feature has been removed
+			 * 
+			if (str.Equals (IDPacket.PARENT_TYPE)) {
+				scope = _SS [_SS.Length - 1 - ++PARENT_COUNTER];
+				continue;
+			}
+			*/
+
 			string[] addr_parts = str.Split (':');
 			string addr_type = addr_parts [0], addr_name = addr_parts [1];
 
@@ -106,38 +123,11 @@ public class YSStateModule	{
 				StructureFrame schild;
 				if (scope.Structures.TryGetValue (addr_name, out schild)) {
 					Debug ("[Structure] Child " + addr_name + " found");
-					scope = StructureFrame.Appropriate(addr_name, schild);
-				}			
-			}
-			/*StructureFrame schild;
-			FunctionFrame fchild;
-			if (scope.Structures.TryGetValue (str, out schild)) {
-				Debug ("[Struct] Child " + str + " found");
-				scope = StructureFrame.Appropriate(str, schild);
-				SCNT++;
-				continue;
-			} else if (scope.Functions.TryGetValue (str, out fchild)) {
-				Debug ("[Func] Child " + str + " found");
-				//scope = CreateFunctionScope (fchild);
-				//SCNT++;
-				if (i != path.Length - 1)
-					Error ("Functions donot have accessible variables");
-				break;
-			} else {
-				if(i > 0)
-					Error ("Child " + str + " NOT found");
-				//See if the next scope in the stack matches
-				ScopeFrame[] _SS = Scope_Stack.ToArray ();
-				for(; i < _SS.Length; i++)
-				{
-					string _str = path[i];
-					ScopeFrame _SF = _SS [i];
-					if (_str == _SF.Name)
-						scope = _SF;
-					else
-						Error ("Scope " + _str + " not found inside " + scope.Name);
+					scope = StructureFrame.Appropriate (addr_name, schild);
+				} else {
+					Error (String.Format ("There is no structure named {0} in the scope", addr_name)); 
 				}
-			}*/
+			}
 		}
 		Debug ("Exiting Finder");
 	}
@@ -336,6 +326,9 @@ public class YSStateModule	{
 
 	public class StructureFrame
 	{
+		//public enum ArrayType { None, Boolean, Number, Text };
+		//ArrayType AType = ArrayType.None;
+		readonly IdentityType ArrayType;
 		public Primitives Primitives;
 		public Dictionary<string, StructureFrame> Structures;
 		public Dictionary<string, FunctionFrame> Functions;
@@ -347,6 +340,12 @@ public class YSStateModule	{
 			Functions = new Dictionary<string, FunctionFrame> ();
 		}
 
+		public StructureFrame(IdentityType Type){
+			Primitives = YSStateModule.PrepareEmptyPrimitives ();
+			Structures = new Dictionary<string, StructureFrame> ();
+			ArrayType = Type;
+		}
+
 		public StructureFrame(StructureFrame original)
 		{
 			Primitives = YSStateModule.PrepareEmptyPrimitives ();
@@ -355,6 +354,11 @@ public class YSStateModule	{
 
 			Merge(original);
 		}
+
+		/*public void SetToArray(ArrayType Type)
+		{
+			AType = Type;
+		}*/
 
 		public static ScopeFrame Appropriate(string name, StructureFrame sframe)
 		{
@@ -538,6 +542,7 @@ public class YSStateModule	{
 	public class FunctionFrame
 	{
 		public IdentityType Returns;
+		public int[] ReturnDimensions;
 		public List<FunctionParameter> Parameters;
 		public int Start;
 		public YSParseNode Block;
@@ -564,19 +569,25 @@ public class YSStateModule	{
 	{
 		public string Name;
 		public IdentityType Type;
+		public int[] TypeDimensions;
 
-		public FunctionParameter() {}
+		public FunctionParameter() 
+		{
+			this.TypeDimensions = new int[0];
+		}
 
 		public FunctionParameter(string Name, IdentityType Type)
 		{
 			this.Name = Name;
 			this.Type = Type;
+			this.TypeDimensions = new int[0];
 		}
 
 		public FunctionParameter(FunctionParameter original)
 		{
 			this.Name = original.Name;
 			this.Type = original.Type;
+			this.TypeDimensions = original.TypeDimensions;
 		}
 	}
 
@@ -630,6 +641,26 @@ public class YSStateModule	{
 			IDPacket Address = IDPacket.CreateIDPacket (this, fp.Name, Binding.Type);
 			if (Binding.Type != fp.Type)
 				Error ("Binding Error: Parameter type mismatch, expected: " + fp.Type + " got " + Binding.Type);
+			if (Binding.ArrayType != IdentityType.Unknown) {
+				if (fp.TypeDimensions.Length > 0) {
+					if (Binding.ArrayType != fp.Type) {
+						Error ("Binding Error: Parameter type mismatch, expected: Array of " + fp.Type + " got Array of " + Binding.ArrayType);
+					}
+					int dcnt = 0;
+					foreach (int dim in fp.TypeDimensions) {
+						if (dim == -1)
+							continue;
+						if (dim != Binding.TypeDimensions [dcnt++]) {
+							Error (String.Format ("Binding Error: Dimension Mismatch, expecting {0} got {1}", fp.TypeDimensions,
+								Binding.TypeDimensions));
+						}
+					}
+				} else {
+					Error(String.Format("Binding Error: Expecting a Primitive {0} got Array of {1}", fp.Type, Binding.ArrayType));
+				}
+			} else if (fp.TypeDimensions.Length > 0) {
+				Error(String.Format("Binding Error: Expecting an Array of {0} got Primitive {1}", fp.Type, Binding.ArrayType));
+			}
 
 			COPY (Address, Binding);
 			Debug ("After copy");
@@ -755,16 +786,21 @@ public class YSStateModule	{
 	public class IDPacket {
 		public string Name { get; set; }
 		public IdentityType Type { get; set; }
+		public IdentityType ArrayType;
+		public int[] TypeDimensions;
 		public string Address { get; set; }
 
 		static long SYSTEM_SEED = 0;
-		static String RETURN_NAME = "_RTX0";
+		static string RETURN_NAME = "_RTX0";
+		public static string PARENT_TYPE = "..";
 
 		public IDPacket(IDPacket copy)
 		{
 			Name = copy.Name;
 			Type = copy.Type;
 			Address = copy.Address;
+			ArrayType = copy.ArrayType;
+			TypeDimensions = copy.TypeDimensions;
 		}
 
 		public static IDPacket CreateIDPacket(YSStateModule state, string name, IdentityType type)
@@ -801,6 +837,8 @@ public class YSStateModule	{
 			this.Name = name;
 			this.Type = type;
 			this.Address = address;
+			this.ArrayType = IdentityType.Unknown;
+			this.TypeDimensions = new int[0];
 		}
 	}
 
@@ -1156,7 +1194,7 @@ public class YSStateModule	{
 		string name = Context.Current.Token.Content;
 		int location = Context.Current.Token.Position;
 		if(VERBOSE)
-			Console.WriteLine (String.Format("[Verbose near {0} @ {1}] {2} ", name, location, s));
+			Console.WriteLine (String.Format(CONSOLE_TAG + "[Verbose near {0} @ {1}] {2} ", name, location, s));
 	}
 
 	void Debug(String s)
@@ -1165,14 +1203,14 @@ public class YSStateModule	{
 		string name = Context.Current.Token.Content;
 		int location = Context.Current.Token.Position;
 		if(DEBUG)
-			Console.WriteLine (String.Format("[Debug near {0} @ {1}] {2} ", name, location, s));
+			Console.WriteLine (String.Format(CONSOLE_TAG + "[Debug near {0} @ {1}] {2} ", name, location, s));
 	}
 
 	void Error(String s)
 	{
 		string name = Context.Current.Token.Content;
 		int location = Context.Current.Token.Position;
-		Console.WriteLine (String.Format("[Error near {0} @ {1}] {2} ", name, location, s));
+		Console.WriteLine (String.Format(CONSOLE_TAG + "[Error near {0} @ {1}] {2} ", name, location, s));
 		throw new StateException ("State Exception");
 	}
 
