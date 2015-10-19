@@ -4,7 +4,7 @@ using Token 		= YSToken;
 using Type 			= YSToken.TokenType;
 //using DataType = YSInterpretModule.DataType;
 using IdentityType 	= YSStateModule.IdentityType;
-using StructureFrame = YSStateModule.StructureFrame;
+using StructureFrame = YSStateModule.GenericFrame;
 using FunctionFrame 	= YSStateModule.FunctionFrame;
 using FunctionParamater = YSStateModule.FunctionParameter;
 using ScopeFrame = YSStateModule.ScopeFrame;
@@ -107,10 +107,9 @@ public class YSRDParser
 			Error ("Expecting a data type");
 	}*/
 
-	public YSRDParser (string raw)
+	public YSRDParser (List<Token> tokens)
 	{
-		var Lexer = new YSLexer (raw);
-		program_tokens = Lexer.GetTokenList ();
+		program_tokens = tokens;
 		PC = 0;
 		ERR_COUNT = 0;
 		parse_nodes = new Stack<YSParseNode> ();
@@ -178,15 +177,15 @@ public class YSRDParser
 
 	void ArrayDimensions()
 	{
-		PushParseNode (ParseNodeType.ArrayDimensions);
 		if (Accept (Type.LSBraket)) {
+			PushParseNode (ParseNodeType.ArrayDimensions);
 			Expression ();
 			while (Accept (Type.Comma)) {
 				Expression ();
 			}
 			Expect (Type.RSBraket);
+			PopAndInsertParseNode ();
 		}
-		PopAndInsertParseNode ();
 	}
 
 	bool DataType (bool Expect_Sub, out bool IsArray)//, out YSToken TypeToken, out bool IsArray)
@@ -339,6 +338,8 @@ public class YSRDParser
 		//skip tokens until a synchronizing token is found
 		//sync token ";"
 		//discard the current parsenode
+		while (current_node.Type != ParseNodeType.Statement)
+			PopParseNode ();
 		PopParseNode ();
 		while (!EOF && !Accept (Type.Semicolon)) {
 			Debug(String.Format("[Panic Mode] Discarding token {0} [Type: {1}]", current.Content, current.Type));
@@ -348,16 +349,16 @@ public class YSRDParser
 
 	bool Header()
 	{
-		PushParseNode (ParseNodeType.Import);
 		if (Accept (Type.Import)) {
+			PushParseNode (ParseNodeType.Import);
 			Expect (Type.TextData);
 			CreateTerminalChild (previous);
 			Expect (Type.Semicolon);
+			PopAndInsertParseNode ();
 			return true;
 		} else {
 			return false;
 		}
-		PopAndInsertParseNode ();
 	}
 
 	void Statement()
@@ -789,12 +790,14 @@ public class YSRDParser
 					Error ("Parent keyword must be followed by another parent keyword or identity");
 				}
 		}*/
-		if (identityToken != null || Accept(Type.Identity)) {
+		if (identityToken != null || Accept (Type.Identity)) {
 			identityToken = previous;
 			if (Accept (Type.LParen)) {
 				if (dataType)
 					Error ("Expecting a data type, not a function");
 				IdentityFunction (identityToken);
+			} else if(Accept(Type.LSBraket)){
+				IdentityArray (identityToken);
 			} else if (Accept (Type.Period)) {
 				IdentityStructure (identityToken);
 			} else {
@@ -814,6 +817,16 @@ public class YSRDParser
 		PushParseNode (ParseNodeType.Identity);
 		PushGlobalAndParentKW ();
 		CreateTerminalChild (identityToken);
+		PopAndInsertParseNode ();
+	}
+
+	void IdentityArray(YSToken identityToken)
+	{
+		PushParseNode (ParseNodeType.IdentityArray);
+		PushGlobalAndParentKW ();
+		CreateTerminalChild (identityToken);
+		Expression ();
+		Expect (Type.RSBraket);
 		PopAndInsertParseNode ();
 	}
 
