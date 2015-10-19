@@ -11,8 +11,22 @@ public class YSStateModule	{
 	public static bool DEBUG = false;
 	public static bool VERBOSE = false;
 	/*public enum DataType { Boolean, Number, Text, List, GameObject, Structure, Unknown };*/
-	bool PARSE_MODE;
 	YSInterpreter Context;
+
+	public YSStateModule ()
+	{
+		Console.WriteLine ("Creating scope...");
+		Global_Scope = new ScopeFrame ("", ScopeFrame.FrameTypes.None);
+		Scope_Stack = new Stack<ScopeFrame> ();
+
+		TemporaryStorage = new ScopeFrame();
+		Console.WriteLine ("Finished Scope Creation...");
+	}
+
+	public void SetContext(YSInterpreter context)
+	{
+		Context = context;
+	}
 
 	public IdentityType TranslateTokenTypeToIdentityType(Type current)
 	{
@@ -119,10 +133,10 @@ public class YSStateModule	{
 					Debug (String.Format ("Didn't find {0} on top of {1}", addr_name, scope.Name));
 				}
 			} else {
-				Debug ("Searching structures...");
-				StructureFrame schild;
-				if (scope.Structures.TryGetValue (addr_name, out schild)) {
-					Debug ("[Structure] Child " + addr_name + " found");
+				Debug ("Searching Generics...");
+				GenericFrame schild;
+				if (scope.Generics.TryGetValue (addr_name, out schild)) {
+					Debug ("[Generic] Child " + addr_name + " found");
 					scope = StructureFrame.Appropriate (addr_name, schild);
 				} else {
 					Error (String.Format ("There is no structure named {0} in the scope", addr_name)); 
@@ -189,33 +203,33 @@ public class YSStateModule	{
 		return scope.Primitives.Text.TryGetValue (packet.Name, out value);
 	}
 
-	public void PutStructure(IDPacket packet, StructureFrame structure)
+	public void PutGeneric(IDPacket packet, GenericFrame structure)
 	{
 		ScopeFrame scope;
 		FindNameScope (packet, out scope);
-		StructureFrame trash;
-		if (TryGetStructure (packet, out trash))
-			scope.Structures [packet.Name] = structure;
+		GenericFrame trash;
+		if (TryGetGeneric (packet, out trash))
+			scope.Generics [packet.Name] = structure;
 		else
-			scope.Structures.Add (packet.Name, structure);
+			scope.Generics.Add (packet.Name, structure);
 	}
 
 	public void PutParseStructure(string name, StructureFrame value)
 	{
-		if(!current_scope.Structures.ContainsKey(name))
-		current_scope.Structures.Add (name, value);
+		if(!current_scope.Generics.ContainsKey(name))
+		current_scope.Generics.Add (name, value);
 	}
 
-	public bool TryGetStructure(IDPacket packet, out StructureFrame value)
+	public bool TryGetGeneric(IDPacket packet, out GenericFrame value)
 	{
 		ScopeFrame scope;
 		FindNameScope (packet, out scope);
-		return scope.Structures.TryGetValue (packet.Name, out value);
+		return scope.Generics.TryGetValue (packet.Name, out value);
 	}
 
-	public bool TryGetParseStructure(string name, out StructureFrame value)
+	public bool TryGetParseStructure(string name, out GenericFrame value)
 	{
-		return current_scope.Structures.TryGetValue (name, out value);
+		return current_scope.Generics.TryGetValue (name, out value);
 	}
 
 	public void PutFunction(IDPacket packet, FunctionFrame function)
@@ -284,11 +298,36 @@ public class YSStateModule	{
 			scope.Primitives.Text.Remove (packet.Name);
 			break;
 		case IdentityType.Structure:
-			scope.Structures.Remove (packet.Name);
+			scope.Generics.Remove (packet.Name);
 			break;
 		case IdentityType.Function:
 			scope.Functions.Remove (packet.Name);
 			break;
+		}
+	}
+
+	public IDPacket GET(string name)
+	{
+		if (current_scope.Primitives.Numbers.ContainsKey (name)) {
+			return IDPacket.CreateIDPacket (this, name, IdentityType.Number);
+		} else if (current_scope.Primitives.Booleans.ContainsKey (name)) {
+			return IDPacket.CreateIDPacket (this, name, IdentityType.Boolean);
+		} else if (current_scope.Primitives.Text.ContainsKey (name)) {
+			return IDPacket.CreateIDPacket (this, name, IdentityType.Text);
+		} else if (current_scope.Generics.ContainsKey (name)) {
+			IDPacket StructPacket = IDPacket.CreateIDPacket (this, name, IdentityType.Structure);
+			GenericFrame GF;
+			ArrayFrame AF = new ArrayFrame();
+			TryGetGeneric (StructPacket, out GF);
+			if (GF.GetType () == AF.GetType()) {
+				AF = (ArrayFrame)GF;
+				StructPacket.ArrayType = AF.ResolvedType;
+			}
+			return StructPacket;
+		} else if (current_scope.Functions.ContainsKey (name)) {
+			return IDPacket.CreateIDPacket (this, name, IdentityType.Function);
+		} else {
+			return null;
 		}
 	}
 
@@ -311,9 +350,9 @@ public class YSStateModule	{
 			TryGetText (FROM, out t);
 			PutText (TO, t);
 		} else if (TO.Type == IdentityType.Structure) {
-			StructureFrame sf;
-			TryGetStructure (FROM, out sf);
-			PutStructure (TO, sf);
+			GenericFrame sf;
+			TryGetGeneric (FROM, out sf);
+			PutGeneric (TO, sf);
 		} else if (TO.Type == IdentityType.Function) {
 			FunctionFrame ff;
 			TryGetFunction (FROM, out ff);
@@ -324,97 +363,176 @@ public class YSStateModule	{
 		Debug ("Finished copy");
 	}
 
-	public class StructureFrame
+	public class GenericFrame
 	{
-		//public enum ArrayType { None, Boolean, Number, Text };
-		//ArrayType AType = ArrayType.None;
-		readonly IdentityType ArrayType;
 		public Primitives Primitives;
-		public Dictionary<string, StructureFrame> Structures;
+		public Dictionary<string, GenericFrame> Generics;
 		public Dictionary<string, FunctionFrame> Functions;
 
-		public StructureFrame()
+		public GenericFrame() {}
+
+		public GenericFrame(IdentityType[] Types) 
 		{
-			Primitives = YSStateModule.PrepareEmptyPrimitives ();
-			Structures = new Dictionary<string, StructureFrame> ();
-			Functions = new Dictionary<string, FunctionFrame> ();
+			foreach (IdentityType type in Types) {
+				if(type == IdentityType.Number){
+					Primitives.Numbers = new Dictionary<string, double>();
+				} else if(type == IdentityType.Boolean){
+					Primitives.Booleans = new Dictionary<string, bool>();
+				} else if(type == IdentityType.Text){
+					Primitives.Text = new Dictionary<string, string>();
+				} else if(type == IdentityType.Structure){
+					Generics = new Dictionary<string, GenericFrame>();
+				} else if(type == IdentityType.Function){
+					Functions = new Dictionary<string, FunctionFrame>();
+				} else {
+					//nothing
+				}
+			}
 		}
 
-		public StructureFrame(IdentityType Type){
-			Primitives = YSStateModule.PrepareEmptyPrimitives ();
-			Structures = new Dictionary<string, StructureFrame> ();
-			ArrayType = Type;
-		}
-
-		public StructureFrame(StructureFrame original)
+		public GenericFrame(GenericFrame original)
 		{
-			Primitives = YSStateModule.PrepareEmptyPrimitives ();
-			Structures = new Dictionary<string, StructureFrame> ();
-			Functions = new Dictionary<string, FunctionFrame> ();
-
 			Merge(original);
 		}
 
-		/*public void SetToArray(ArrayType Type)
+		public void Merge(GenericFrame merge)
 		{
-			AType = Type;
-		}*/
+			//Copy primitives
 
-		public static ScopeFrame Appropriate(string name, StructureFrame sframe)
+			if (Primitives.Numbers != null && merge.Primitives.Numbers != null) {
+				foreach (string key in merge.Primitives.Numbers.Keys) {
+					double val; 
+					merge.Primitives.Numbers.TryGetValue (key, out val);
+					Primitives.Numbers.Add (key, val);
+				}
+			}
+
+			if (Primitives.Booleans != null && merge.Primitives.Booleans != null) {
+				foreach (string key in merge.Primitives.Booleans.Keys) {
+					bool val; 
+					merge.Primitives.Booleans.TryGetValue (key, out val);
+					Primitives.Booleans.Add (key, val);
+				}
+			}
+
+			if (Primitives.Text != null && merge.Primitives.Text != null) {
+				foreach (string key in merge.Primitives.Text.Keys) {
+					string val; 
+					merge.Primitives.Text.TryGetValue (key, out val);
+					Primitives.Text.Add (key, val);
+				}
+			}
+
+			//copy structures
+			if (Generics != null && merge.Generics != null) {
+				foreach (string key in merge.Generics.Keys) {
+					GenericFrame oval; 
+					merge.Generics.TryGetValue (key, out oval);
+					//TODO Preserve the heirarchy
+
+					GenericFrame cval = GenericFrame.CopyAndPreserveHeirarchy (oval);//new GenericFrame (oval);
+					Generics.Add (key, cval);
+				}
+			}
+
+			//copy functions
+			if (Functions != null && merge.Functions != null) {
+				foreach (string key in merge.Functions.Keys) {
+					FunctionFrame oval; 
+					merge.Functions.TryGetValue (key, out oval);
+					FunctionFrame cval = new FunctionFrame (oval);
+					Functions.Add (key, cval);
+				}
+			}
+		}
+
+		public static GenericFrame CopyAndPreserveHeirarchy(GenericFrame oval)
+		{
+			ScopeFrame SCF = new ScopeFrame ();
+			StructureFrame SF = new StructureFrame ();
+			ArrayFrame AF = new ArrayFrame ();
+			GenericFrame GF = new GenericFrame ();
+
+			if (GF.GetType () == oval.GetType ()) {
+				return oval;
+			} else if (AF.GetType () == oval.GetType ()) {
+				AF = (ArrayFrame)oval;
+				return AF;
+			} else if (SF.GetType () == oval.GetType ()) {
+				SF = (StructureFrame)oval;
+				return SF;
+			} else {
+				SCF = (ScopeFrame)oval;
+				return SCF;
+			}
+		}
+	}
+
+	public class ArrayFrame : GenericFrame
+	{
+		public IdentityType ResolvedType;
+		public int[] Dimensions;
+
+		public ArrayFrame() {}
+
+		public ArrayFrame(IdentityType[] types) : base(types) {}
+
+		public ArrayFrame(IdentityType type, int[] Dimens) : base(new IdentityType[] { type })  {
+			ResolvedType = type;
+			Dimensions = Dimens;
+		}
+
+		public ArrayFrame(ArrayFrame AF) {
+			/*if(AF.ResolvedType != ResolvedType)
+				Error(String.Format("Attempting to copy values of {0} array into {1} array", AF.ResolvedType, ResolvedType));
+			if(Dimensions.Length == AF.Dimensions.Length) {
+				int i = 0;
+				foreach(int d in Dimensions) {
+					if(d != AF.Dimensions[i++])
+						Error("Dimensions of arrays are not the same");
+				}
+			} else {
+				Error("Dimensions of arrays are not the same");
+			}*/
+			ResolvedType =  AF.ResolvedType;
+			Dimensions = AF.Dimensions;
+			base.Merge(AF);
+		}
+
+		public ArrayFrame(GenericFrame original) : base(original) {}
+	}
+
+	public class StructureFrame : ArrayFrame
+	{
+
+		public StructureFrame() : 
+		base(new IdentityType[] { IdentityType.Number, IdentityType.Boolean, IdentityType.Text, IdentityType.Structure, IdentityType.Function }) {}
+
+		public StructureFrame(StructureFrame original): 
+		base(new IdentityType[] { IdentityType.Number, IdentityType.Boolean, IdentityType.Text, IdentityType.Structure, IdentityType.Function })
+		{
+			Merge(original);
+		}
+
+		public StructureFrame(ArrayFrame original) : base(original) {}
+
+		public static ScopeFrame Appropriate(string name, GenericFrame gframe)
 		{
 			ScopeFrame scope = new ScopeFrame ();
 			scope.Type = ScopeFrame.FrameTypes.Structure;
 			scope.Name = name;
 
-			scope.Primitives = sframe.Primitives;
-			scope.Structures = sframe.Structures;
-			scope.Functions = sframe.Functions;
+			scope.Primitives = gframe.Primitives;
+			scope.Generics = gframe.Generics;
+			scope.Functions = gframe.Functions;
 
 			return scope;
 		}
 
 		public void MergeForScope(string StructureName, StructureFrame original)
 		{
-			Structures.Remove (StructureName);
+			Generics.Remove (StructureName);
 			Merge (original);
-		}
-
-		public void Merge(StructureFrame merge)
-		{
-			//Copy primitives
-			foreach (string key in merge.Primitives.Numbers.Keys) {
-				double val; 
-				merge.Primitives.Numbers.TryGetValue (key, out val);
-				Primitives.Numbers.Add (key, val);
-			}
-
-			foreach (string key in merge.Primitives.Booleans.Keys) {
-				bool val; 
-				merge.Primitives.Booleans.TryGetValue (key, out val);
-				Primitives.Booleans.Add (key, val);
-			}
-
-			foreach (string key in merge.Primitives.Text.Keys) {
-				string val; 
-				merge.Primitives.Text.TryGetValue (key, out val);
-				Primitives.Text.Add (key, val);
-			}
-
-			//copy structures
-			foreach (string key in merge.Structures.Keys) {
-				StructureFrame oval; 
-				merge.Structures.TryGetValue (key, out oval);
-				StructureFrame cval = new StructureFrame (oval);
-				Structures.Add (key, cval);
-			}
-
-			//copy functions
-			foreach (string key in merge.Functions.Keys) {
-				FunctionFrame oval; 
-				merge.Functions.TryGetValue (key, out oval);
-				FunctionFrame cval = new FunctionFrame (oval);
-				Functions.Add (key, cval);
-			}
 		}
 
 		protected StructureFrame UpdateOriginal(StructureFrame original) {
@@ -444,10 +562,10 @@ public class YSStateModule	{
 					original.Primitives.Text [key] = Primitives.Text [key];
 			}
 
-			keys = new List<string>(original.Structures.Keys);
+			keys = new List<string>(original.Generics.Keys);
 			foreach (string key in keys) {
-				if(Structures.ContainsKey(key))
-					original.Structures [key] = Structures [key];
+				if(Generics.ContainsKey(key))
+					original.Generics [key] = Generics [key];
 			}
 
 			keys = new List<string>(original.Functions.Keys);
@@ -486,11 +604,14 @@ public class YSStateModule	{
 			Type = original.Type;
 		}
 
-		public ScopeFrame(StructureFrame original, string Name, FrameTypes Type) : base((StructureFrame) original)
+		public ScopeFrame(ArrayFrame original, string Name, FrameTypes Type) : base(original)
 		{
-			//this.Primitives = original.Primitives;
-			//this.Structures = original.Structures;
-			//this.Functions = original.Functions;
+			this.Name = Name;
+			this.Type = Type;
+		}
+
+		public ScopeFrame(StructureFrame original, string Name, FrameTypes Type) : base(original)
+		{
 			this.Name = Name;
 			this.Type = Type;
 		}
@@ -507,7 +628,7 @@ public class YSStateModule	{
 	void RegisterStructure (string name, StructureFrame stype)
 	{
 		if (!IdentityExists (name))
-			current_scope.Structures.Add (name, stype);
+			current_scope.Generics.Add (name, stype);
 		else
 			Error ("Structure with name " + name + " already exists.");
 	}
@@ -531,7 +652,7 @@ public class YSStateModule	{
 		} else if (scope.Functions.ContainsKey (name)) {
 			itype = IdentityType.Function;
 			return true;
-		} else if (scope.Structures.ContainsKey (name)) {
+		} else if (scope.Generics.ContainsKey (name)) {
 			itype = IdentityType.Structure;
 			return true;
 		} else {
@@ -642,7 +763,7 @@ public class YSStateModule	{
 			if (Binding.Type != fp.Type)
 				Error ("Binding Error: Parameter type mismatch, expected: " + fp.Type + " got " + Binding.Type);
 			if (Binding.ArrayType != IdentityType.Unknown) {
-				if (fp.TypeDimensions.Length > 0) {
+				if (fp.TypeDimensions != null) {
 					if (Binding.ArrayType != fp.Type) {
 						Error ("Binding Error: Parameter type mismatch, expected: Array of " + fp.Type + " got Array of " + Binding.ArrayType);
 					}
@@ -658,7 +779,7 @@ public class YSStateModule	{
 				} else {
 					Error(String.Format("Binding Error: Expecting a Primitive {0} got Array of {1}", fp.Type, Binding.ArrayType));
 				}
-			} else if (fp.TypeDimensions.Length > 0) {
+			} else if (fp.TypeDimensions != null) {
 				Error(String.Format("Binding Error: Expecting an Array of {0} got Primitive {1}", fp.Type, Binding.ArrayType));
 			}
 
@@ -673,11 +794,11 @@ public class YSStateModule	{
 		return current_scope.Primitives.Numbers.ContainsKey (name)
 		|| current_scope.Primitives.Booleans.ContainsKey (name)
 		|| current_scope.Primitives.Text.ContainsKey (name)
-		|| current_scope.Structures.ContainsKey (name)
+		|| current_scope.Generics.ContainsKey (name)
 		|| current_scope.Functions.ContainsKey (name);
 	}
 
-	public enum IdentityType { Boolean, Number, Text, List, GameObject, Structure, Function, Unknown };
+	public enum IdentityType { Unknown, Boolean, Number, Text, List, GameObject, Structure, Function };
 
 	public bool IsPrimitive(IdentityType i)
 	{
@@ -706,7 +827,7 @@ public class YSStateModule	{
 			return IdentityType.Function;
 		} 
 
-		if (current_scope.Structures.ContainsKey (name)) {
+		if (current_scope.Generics.ContainsKey (name)) {
 			return IdentityType.Structure;
 		} 
 
@@ -739,7 +860,7 @@ public class YSStateModule	{
 
 	public void PushScope(ScopeFrame push)
 	{
-		if (!PARSE_MODE && push.Name == "")
+		if (push.Name == "")
 			Error ("Scope above Level 0 cannot have no name");
 		Scope_Stack.Push (push);
 	}
@@ -1136,18 +1257,6 @@ public class YSStateModule	{
 			return null;
 		}
 		return ret;
-	}
-
-	public YSStateModule (YSInterpreter context, bool parse_mode)
-	{
-		Context = context;
-		Console.WriteLine ("Creating scope...");
-		PARSE_MODE = parse_mode;
-		Global_Scope = new ScopeFrame ("", ScopeFrame.FrameTypes.None);
-		Scope_Stack = new Stack<ScopeFrame> ();
-
-		TemporaryStorage = new ScopeFrame();
-		Console.WriteLine ("Finished Scope Creation...");
 	}
 	/*
 	public void Error(string s)

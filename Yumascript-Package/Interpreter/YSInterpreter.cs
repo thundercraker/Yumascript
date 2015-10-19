@@ -2,10 +2,12 @@
 using System.Collections.Generic;
 using NType = YSParseNode.NodeType;
 using IdentityType 	= YSStateModule.IdentityType;
-using ScopeFrame = YSStateModule.ScopeFrame;
+using GenericFrame = YSStateModule.GenericFrame;
+using ArrayFrame = YSStateModule.ArrayFrame;
 using StructureFrame = YSStateModule.StructureFrame;
 using FunctionFrame 	= YSStateModule.FunctionFrame;
 using FunctionParamater = YSStateModule.FunctionParameter;
+using ScopeFrame = YSStateModule.ScopeFrame;
 using Primitives 	= YSStateModule.Primitives;
 using IDPacket = YSStateModule.IDPacket;
 using StateException = YSStateModule.StateException;
@@ -27,18 +29,21 @@ public class YSInterpreter
 	//int CINDEX = 0;
 	YSStateModule STATE;
 
+
 	public YSInterpreter (YSParseNode ParseTree)
 	{
 		Console.WriteLine ("Begining Interpreter");
 		Node = ParseTree;
-		//Memory = new Stack<NodeIndex> ();
-		STATE = new YSStateModule (this, false);
 	}
 
-	public bool Interpret()
+	public bool Interpret(ref YSStateModule state)
 	{
 		Console.WriteLine ("Beginning Program...");
-		return Program (Node);
+		STATE = state;
+		STATE.SetContext (this);
+		bool result = Program (Node);
+		state = STATE;
+		return result;
 	}
 
 	bool AcceptType(IdentityType accept, IdentityType type)
@@ -101,12 +106,23 @@ public class YSInterpreter
 
 	void Header(YSParseNode HeaderNode)
 	{
+		List<string> Resource_Sources = new List<string> ();
+		YSLinker Linker = new YSLinker ();
 		foreach (YSParseNode HeaderItem in HeaderNode.Children) {
 			if (HeaderItem.Type == NType.Import) {
-				//TODO Importer
+				Resource_Sources.Add (HeaderItem.Children [0].Token.Content);
 			} else {
 				Error ("Unrecognized header type");
 			}
+		}
+		foreach(YSLinker.Resource Resource in Linker.LoadResources (Resource_Sources.ToArray ())) {
+			ScopeFrame ResourceScope = new ScopeFrame (Resource.Name, ScopeFrame.FrameTypes.Structure);
+			STATE.PushScope (ResourceScope);
+			Yumascript.LPIProcess (ref STATE, Resource.Content);
+			StructureFrame SFrame = STATE.PopScopeNoSave ();
+
+			IDPacket ResourceFrameID = IDPacket.CreateIDPacket (STATE, Resource.Name, IdentityType.Structure);
+			STATE.PutGeneric (ResourceFrameID, SFrame);
 		}
 	}
 
@@ -188,14 +204,25 @@ public class YSInterpreter
 		List<int> Dimensions;
 		IdentityType _DataType;
 		DataType (VarCreateNode.Children [0], out _DataType, out Dimensions);
-		if (Dimensions.Count > 0) {
+		if (Dimensions != null) {
 			YSToken NameToken = VarCreateNode.Children [1].Token;
 			if (VarCreateNode.Children [2].Type == NType.ExpressionList) {
 				IdentityType ResolvedType = IdentityType.Unknown;
 				List<int> ReversedDimensions = new List<int> ();
-				IDPacket exp_list = ExpressionList (VarCreateNode.Children [1], ref ReversedDimensions, ref ResolvedType);
+				IDPacket exp_list = ExpressionList (VarCreateNode.Children [2], ref ReversedDimensions, ref ResolvedType);
 				IDPacket put = IDPacket.CreateIDPacket (STATE, NameToken.Content, IdentityType.Structure);
+				put.ArrayType = ResolvedType;
+				ReversedDimensions.Reverse ();
+				ArrayFrame AF = new ArrayFrame (put.ArrayType, ReversedDimensions.ToArray());
+				STATE.PutGeneric (put, AF);
+
+				GenericFrame CastedGeneric;
+				ArrayFrame AF_Casted;
+				STATE.TryGetGeneric (put, out CastedGeneric);
+				AF_Casted = (ArrayFrame)CastedGeneric;
+
 				STATE.COPY (put, exp_list);
+				Debug ("T");
 			} else if(VarCreateNode.Children [2].Type == NType.ArrayInit) {
 				//TODO array initializer
 			} else {
@@ -289,7 +316,7 @@ public class YSInterpreter
 			//TODO register as child of parent
 			IDPacket SID = IDPacket.CreateIDPacket (STATE, StructureName, IdentityType.Structure);
 
-			STATE.PutStructure (SID, structure);
+			STATE.PutGeneric (SID, structure);
 
 			STATE.PushScope (new ScopeFrame(structure, StructureName, ScopeFrame.FrameTypes.Structure));
 			while (CINDEX < StructureNode.Children.Count) {
@@ -298,7 +325,7 @@ public class YSInterpreter
 			}
 			STATE.PopScopeNoSave ();
 			IDPacket newStructure = IDPacket.CreateIDPacket (STATE, StructureName, IdentityType.Structure);
-			STATE.PutStructure (newStructure, structure);
+			STATE.PutGeneric (newStructure, structure);
 		}
 
 
@@ -309,31 +336,32 @@ public class YSInterpreter
 	{
 		Debug ("Beginning a Data Type");
 
-		Dimensions = new List<int> ();
-
 		if (DataTypeNode.Children.Count < 1) {
+			Dimensions = null;
 			Type = IdentityType.Unknown;
 			return false;
 		} else if (DataTypeNode.Children.Count > 1) {
-			Dimensions = null;
+			Dimensions = new List<int> ();
 			Type = STATE.TranslateTokenTypeToIdentityType (DataTypeNode.Children [1].Token.Type);
-			YSParseNode ADNode = DataTypeNode.Children [2];
-			foreach (YSParseNode Terminal in ADNode.Children) {
-				if (Terminal.Token.Type != YSToken.TokenType.NumberData && 
-					Terminal.Token.Type != YSToken.TokenType.Asterisk)
-					Error ("Expecting a number or *");
-				if (Terminal.Token.Type == YSToken.TokenType.Asterisk)
-					Dimensions.Add (-1);
-				else {
-					int dimval = int.Parse (Terminal.Token.Content);
-					if (dimval < 0)
-						Error ("Dimension values cannot be under 0");
-					Dimensions.Add (dimval);
+			if (DataTypeNode.Children.Count > 2 && DataTypeNode.Children [2].Type == NType.ArrayDimensions) {
+				YSParseNode ADNode = DataTypeNode.Children [2];
+				foreach (YSParseNode Terminal in ADNode.Children) {
+					if (Terminal.Token.Type != YSToken.TokenType.NumberData &&
+					    Terminal.Token.Type != YSToken.TokenType.Asterisk)
+						Error ("Expecting a number or *");
+					if (Terminal.Token.Type == YSToken.TokenType.Asterisk)
+						Dimensions.Add (-1);
+					else {
+						int dimval = int.Parse (Terminal.Token.Content);
+						if (dimval < 0)
+							Error ("Dimension values cannot be under 0");
+						Dimensions.Add (dimval);
+					}
 				}
 			}
 			return true;
 		} else {
-			Dimensions = new List<int>();
+			Dimensions = null;
 			Type = STATE.TranslateTokenTypeToIdentityType(DataTypeNode.Children [0].Token.Type);
 			return true;
 		}
@@ -352,7 +380,7 @@ public class YSInterpreter
 		List<int> Dimens;
 		DataType (FunctionNode.Children [2], out IType, out Dimens);
 		FunctionFrame.Returns = IType;
-		FunctionFrame.ReturnDimensions = Dimens.ToArray ();
+		FunctionFrame.ReturnDimensions = (Dimens != null) ? Dimens.ToArray () : null;
 		//STATE.TranslateTokenTypeToIdentityType (FunctionNode.Children [2].Token.Type);
 		FunctionFrame.Block = FunctionNode.Children [3];
 
@@ -373,7 +401,7 @@ public class YSInterpreter
 				//fp.Type = STATE.TranslateTokenTypeToIdentityType (FunctionParamListNode.Children [FPC++].Token.Type);
 				List<int> Dimens;
 				DataType (FunctionParamListNode.Children [FPC++], out fp.Type, out Dimens);
-				fp.TypeDimensions = Dimens.ToArray ();
+				fp.TypeDimensions = (Dimens != null) ? Dimens.ToArray () : null;
 				//Debug ("Type " + fp.Type + " Token " + FunctionParamListNode.Children [FPC].Token.Type);
 				fp.Name = FunctionParamListNode.Children [FPC++].Token.Content;
 				Frame.Parameters.Add (fp);
@@ -388,18 +416,17 @@ public class YSInterpreter
 	{
 		DIMCNT = 0;
 		Debug ("Expression List Resolving");
-		IDPacket ARRAY = IDPacket.CreateSystemPacket ("EXPL_TEMP", IdentityType.List);
-		StructureFrame ArrayFrame = new StructureFrame ();
 		//STATE.PutStructure (ARRAY, ArrayFrame);
 
-		IDPacket EXPL = IDPacket.CreateSystemPacket ("EXPL_RESV", IdentityType.List);
 		if (ExpressionListNode.Children.Count < 1) {
 			Debug ("Expression List had no children");
-			STATE.PutStructure (EXPL, ArrayFrame);
-			return EXPL;
+			return null;
 		}
 
-		STATE.PushScope ((ScopeFrame)ArrayFrame);
+		IDPacket ARRAY = IDPacket.CreateSystemPacket ("EXPL_TEMP", IdentityType.Structure);
+		ScopeFrame ArrayScope = new ScopeFrame (new StructureFrame(), ARRAY.Name, ScopeFrame.FrameTypes.None);
+		STATE.PushScope (ArrayScope);
+
 		//List<IDPacket> RESULT = new List<IDPacket> ();
 		//Look at the first node, all other nodes must conform to this node's type
 		int NC = 0;
@@ -409,16 +436,16 @@ public class YSInterpreter
 		if (FirstNode.Type == NType.ExpressionList) {
 			ListDimensions++;
 			IDPacket IEXPL = ExpressionList (FirstNode, ref DimensionsReversed, ref ResolvedType);
-			DimensionsReversed.Add (DIMCNT);
+			DimensionsReversed.AddRange (new List<int>(DimensionsReversed));
 			//RESULT.Add (IEXPL);
 			IDPacket FIRST = IDPacket.CreateIDPacket (STATE, "0", IdentityType.Structure);
 			STATE.COPY (FIRST, IEXPL);
 		} else {
 			IDPacket EXP = Expression (FirstNode);
 			ResolvedType = EXP.Type;
-			//RESULT.Add (EXP);
 			if (!STATE.IsPrimitive (ResolvedType))
 				Error ("Expression Lists can only contain identities that resolve to Primitive Types");
+			//RESULT.Add (EXP);
 			IDPacket FIRST = IDPacket.CreateIDPacket (STATE, "0", EXP.Type);
 			STATE.COPY (FIRST, EXP);
 		}
@@ -459,8 +486,17 @@ public class YSInterpreter
 			}
 		}
 		DIMCNT = ELEMENT_COUNT;
-		ArrayFrame = (StructureFrame)STATE.PopScopeNoSave ();
-		STATE.PutStructure (ARRAY, ArrayFrame);
+		DimensionsReversed.Add (DIMCNT);
+
+		ArrayScope = STATE.PopScopeNoSave ();
+
+		ArrayFrame ArrayFrame = new ArrayFrame (new IdentityType[] { ResolvedType });
+		ArrayFrame.Merge ((GenericFrame)ArrayScope);
+		ArrayFrame.ResolvedType = ResolvedType;
+		DimensionsReversed.Reverse ();
+		ArrayFrame.Dimensions = DimensionsReversed.ToArray();
+		ARRAY.ArrayType = ResolvedType;
+		STATE.PutGeneric (ARRAY, ArrayFrame);
 
 		//ResolvedType = RESOLVED_TYPE;
 		return ARRAY;
@@ -588,6 +624,7 @@ public class YSInterpreter
 		Current = ExpressionFactorNode;
 		switch (ExpressionFactorNode.Children [0].Type) {
 		case NType.Identity:
+		case NType.IdentityArray:
 		case NType.IdentityFunction:
 		case NType.IdentityStructure:
 			IDPacket ID = Identity (ExpressionFactorNode.Children[0]);
@@ -630,6 +667,10 @@ public class YSInterpreter
 			IDPacket ID = IDPacket.CreateIDPacket (STATE, IdentityName, IdentityType);
 			ErrorIfUnknown ("Exit ExpressionFactor (Identity)", ID);
 			return ID;
+		case NType.IdentityArray:
+			IDPacket AID = IdentityArray (INode);
+			ErrorIfUnknown ("Exit ExpressionFactor (Array)", AID);
+			return AID;
 		case NType.IdentityFunction:
 			IDPacket RID = IdentityFunction (INode);
 			ErrorIfUnknown ("Exit ExpressionFactor (Function)", RID);
@@ -646,15 +687,48 @@ public class YSInterpreter
 		}
 	}
 
+	IDPacket IdentityArray(YSParseNode IdentityArrayNode)
+	{
+		string ArrayName = IdentityArrayNode.Children [0].Token.Content;
+		IDPacket INDEX = Expression (IdentityArrayNode.Children [1]);
+		if (INDEX.Type != IdentityType.Number) {
+			Error ("An array/list index must be an integer");
+		}
+		IDPacket ArrayStructure = STATE.GET (ArrayName);
+		if (ArrayStructure.Type != IdentityType.Structure) {
+			Error (String.Format ("The identity {0} is expected to be an array, got type {1}", 
+				ArrayName, ArrayStructure.Type));
+		} else if (ArrayStructure.Type == IdentityType.Structure && ArrayStructure.ArrayType == IdentityType.Unknown) {
+			Error (String.Format ("The identity {0} is expected to be an array, got type Structure", 
+				ArrayName));
+		} 
+
+		double dIndex;
+		STATE.TryGetNumber (INDEX, out dIndex);
+		int Index = (int)dIndex;
+
+		if (!(Math.Abs (dIndex % 1) < Double.Epsilon)) {
+			Debug (String.Format("Value of index ({0}) was not an integer, converted to ({1}).",
+				dIndex, Index));
+		}
+
+		IDPacket ID = IDPacket.CreateIDPacket (STATE, Index + "", ArrayStructure.ArrayType);
+		ID.Address += "s:" + ArrayStructure.Name;
+
+		return ID;
+	}
+
 	IDPacket IdentityStructure(YSParseNode IStructureNode)
 	{
 		Debug ("Resolving structure identity");
 		Current = IStructureNode;
 		string StructureName = IStructureNode.Children [0].Token.Content;
 		StructureFrame Frame;
+		GenericFrame GFrame;
 		Debug ("Attempting to find structure " + StructureName + " in " + STATE.current_scope.Name);
 		IDPacket SID = IDPacket.CreateIDPacket (STATE, StructureName, IdentityType.Structure);
-		STATE.TryGetStructure (SID, out Frame);
+		STATE.TryGetGeneric (SID, out GFrame);
+		Frame = (StructureFrame)GFrame;
 
 		ScopeFrame SF = new ScopeFrame (STATE.current_scope, StructureName, ScopeFrame.FrameTypes.Structure);
 		SF.MergeForScope (StructureName, Frame);
