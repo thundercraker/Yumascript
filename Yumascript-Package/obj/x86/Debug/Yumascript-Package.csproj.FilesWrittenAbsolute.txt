@@ -1,5 +1,0 @@
-/home/yumashish/Documents/Projects/Yumascript/Yumascript-Package/obj/x86/Debug/.NETFramework,Version=v4.5.AssemblyAttribute.cs
-/home/yumashish/Documents/Projects/Yumascript/Yumascript-Package/bin/Debug/Yumascript-Package.exe.mdb
-/home/yumashish/Documents/Projects/Yumascript/Yumascript-Package/bin/Debug/Yumascript-Package.exe
-/home/yumashish/Documents/Projects/Yumascript/Yumascript-Package/obj/x86/Debug/Yumascript-Package.exe
-/home/yumashish/Documents/Projects/Yumascript/Yumascript-Package/obj/x86/Debug/Yumascript-Package.exe.mdb
